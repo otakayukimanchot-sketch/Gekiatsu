@@ -1,0 +1,5 @@
+{
+  "name": "激アツ英単語",
+  "description": "Quizletと早押しクイズを掛け合わせた、カードパック形式の英単語クイズアプリ。トレーニングとリアルタイム対戦モードを搭載。",
+  "requestFramePermissions": ["camera"]
+}
