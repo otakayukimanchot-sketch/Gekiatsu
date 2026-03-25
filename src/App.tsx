@@ -12,7 +12,6 @@ import {
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
-import { SponsoredAd } from './components/SponsoredAd';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
 import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp } from './firebase';
@@ -1070,8 +1069,6 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
         <h1 className="text-xs font-black text-slate-400 uppercase tracking-widest">SELECT A PACK TO START</h1>
       </div>
 
-      <SponsoredAd type="banner" className="mb-8" />
-
       <div className="space-y-6">
         {categories.map(category => {
           const isExpanded = expandedCategories.includes(category);
@@ -1152,8 +1149,6 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
           </div>
         )}
       </div>
-
-      <SponsoredAd type="native" className="mt-12" />
 
       <div className="mt-12">
         <h3 className="text-xl font-black text-slate-900 mb-4 tracking-tighter uppercase">Quick Actions</h3>
@@ -1854,8 +1849,6 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             <Home className="w-6 h-6" /> EXIT TO HOME
           </button>
         </div>
-
-        <SponsoredAd type="native" className="mt-8" />
       </div>
     </motion.div>
   );
