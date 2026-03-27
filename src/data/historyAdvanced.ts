@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const HISTORY_ADVANCED_WORDS: Word[] = [
   { "word": "戦前、直良信夫が兵庫県で発見し、日本にも旧石器時代の人類がいた証拠とされた人骨を何という？", "meaning": "明石人骨", "choices": ["明石人骨", "港川人骨", "浜北人骨", "山下町洞人骨"] },

@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const ATTACK25_WORDS: Word[] = [
   {

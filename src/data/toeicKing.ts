@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const TOEIC_KING_WORDS: Word[] = [
   { "word": "abbreviate", "meaning": "省略する", "choices": ["省略する", "加速する", "同化する", "没収する"] },

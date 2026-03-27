@@ -33,6 +33,15 @@ service cloud.firestore {
     //   - masteredWords: list (optional, strings)
     //   - lastPlayed: timestamp (optional)
     //
+    // Collection: wrongQuestions
+    // Document ID: userId_word
+    // Fields:
+    //   - userId: string (required, matches auth.uid)
+    //   - word: string (required)
+    //   - meaning: string (required)
+    //   - choices: list (required, strings)
+    //   - timestamp: timestamp (required)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -102,6 +111,14 @@ service cloud.firestore {
              (!('lastPlayed' in data) || data.lastPlayed is timestamp);
     }
 
+    function isValidWrongQuestion(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.word is string && data.word.size() > 0 &&
+             data.meaning is string &&
+             data.choices is list && data.choices.size() > 0 &&
+             data.timestamp is timestamp;
+    }
+
     // ===============================================================
     // Match Rules
     // ===============================================================
@@ -131,9 +148,10 @@ service cloud.firestore {
 
     match /wrongQuestions/{questionId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isNewDocOwner() && isValidWrongQuestion(request.resource.data);
+      allow update: if isDocOwner() && isValidWrongQuestion(request.resource.data) &&
+                    request.resource.data.userId == resource.data.userId;
+      allow delete: if isDocOwner() || isAdmin();
     }
 
     match /suggestions/{suggestionId} {

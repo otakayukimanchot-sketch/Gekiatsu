@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const TOEIC_990_WORDS: Word[] = [
   { word: 'acquire', meaning: '取得する', choices: ['取得する', '売却する', '破棄する', '無視する'] },

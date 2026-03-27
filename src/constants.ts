@@ -1,20 +1,20 @@
-import { Pack } from './types';
-import { TOEIC_800_WORDS } from './data/toeic800';
-import { TOEIC_990_WORDS } from './data/toeic990';
-import { TRIVIA_WORDS } from './data/trivia';
-import { HIGH_LEVEL_TRIVIA_WORDS } from './data/highLevelTrivia';
-import { EIKEN1_WORDS } from './data/eiken1';
-import { HISTORY_WORDS } from './data/history';
-import { TODAI_KING_WORDS } from './data/todaiKing';
-import { TOEIC_BASIC_WORDS } from './data/toeicBasic';
-import { TOEIC_KING_WORDS } from './data/toeicKing';
-import { HISTORY_BASIC_WORDS } from './data/historyBasic';
-import { HISTORY_ADVANCED_WORDS } from './data/historyAdvanced';
-import { ELEMENTS_WORDS } from './data/elements';
-import { USAGE_WORDS } from './data/usage';
-import { EDO_CASTLE_WORDS } from './data/edoCastle';
-import { ENGLISH_TRIVIA_WORDS } from './data/englishTrivia';
-import { ATTACK25_WORDS } from './data/attack25';
+import type { Pack } from './types.ts';
+import { TOEIC_800_WORDS } from './data/toeic800.ts';
+import { TOEIC_990_WORDS } from './data/toeic990.ts';
+import { TRIVIA_WORDS } from './data/trivia.ts';
+import { HIGH_LEVEL_TRIVIA_WORDS } from './data/highLevelTrivia.ts';
+import { EIKEN1_WORDS } from './data/eiken1.ts';
+import { HISTORY_WORDS } from './data/history.ts';
+import { TODAI_KING_WORDS } from './data/todaiKing.ts';
+import { TOEIC_BASIC_WORDS } from './data/toeicBasic.ts';
+import { TOEIC_KING_WORDS } from './data/toeicKing.ts';
+import { HISTORY_BASIC_WORDS } from './data/historyBasic.ts';
+import { HISTORY_ADVANCED_WORDS } from './data/historyAdvanced.ts';
+import { ELEMENTS_WORDS } from './data/elements.ts';
+import { USAGE_WORDS } from './data/usage.ts';
+import { EDO_CASTLE_WORDS } from './data/edoCastle.ts';
+import { ENGLISH_TRIVIA_WORDS } from './data/englishTrivia.ts';
+import { ATTACK25_WORDS } from './data/attack25.ts';
 
 export const PACKS: Pack[] = [
   {
@@ -100,7 +100,7 @@ export const PACKS: Pack[] = [
   {
     id: 'trivia-300',
     name: '雑学王',
-    description: '日常のちょっとした雑学を英語で学ぼう。',
+    description: '日常のちょっとした雑学を学ぼう。',
     category: '雑学',
     color: 'bg-gradient-to-br from-amber-500 to-orange-600',
     words: TRIVIA_WORDS,

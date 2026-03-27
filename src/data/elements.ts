@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const ELEMENTS_WORDS: Word[] = [
   { "word": "元素記号「H」は何という元素を表している？", "meaning": "水素", "choices": ["水素", "ヘリウム", "酸素", "窒素"] },

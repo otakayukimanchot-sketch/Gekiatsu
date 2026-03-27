@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const EIKEN1_WORDS: Word[] = [
   { word: 'abate', meaning: '和らげる', choices: ['和らげる', '強める', '悪化させる', '増大させる'] },

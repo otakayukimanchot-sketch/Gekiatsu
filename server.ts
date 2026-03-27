@@ -3,7 +3,8 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import type { MatchRoomState } from "./src/types.ts";
+import type { MatchRoomState, Word } from "./src/types.ts";
+import { PACKS } from "./src/constants.ts";
 
 async function startServer() {
   const app = express();
@@ -14,11 +15,20 @@ async function startServer() {
     },
   });
 
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Game state in memory
   const matchingPool = new Map<string, string>(); // key: packId_questionCount, value: socketId
   const activeRooms = new Map<string, MatchRoomState>(); // key: roomId, value: roomData
+
+  const generateQuestions = (packId: string, count: number): Word[] => {
+    const pack = PACKS.find(p => p.id === packId);
+    if (!pack) return [];
+    
+    // Shuffle and pick
+    const shuffled = [...pack.words].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, count);
+  };
 
   const broadcastState = (roomId: string) => {
     const room = activeRooms.get(roomId);
@@ -116,10 +126,6 @@ async function startServer() {
 
     room.phase = "matched";
     broadcastState(roomId);
-
-    setTimeout(() => {
-      startLoadingPhase(roomId);
-    }, 2000); // Brief matched display
   };
 
   io.on("connection", (socket) => {
@@ -135,16 +141,18 @@ async function startServer() {
         if (waitingSocket && waitingSocket.connected) {
           matchingPool.delete(poolKey);
           const roomId = `room_${Math.random().toString(36).substr(2, 9)}`;
+          const questions = generateQuestions(packId, questionCount);
           
           const roomData: MatchRoomState = {
             roomId,
             type: 'battle',
             players: [
-              { ...waitingSocket.data.player, socketId: waitingSocketId, score: 0, isReady: false, answered: false },
-              { ...player, socketId: socket.id, score: 0, isReady: false, answered: false }
+              { ...waitingSocket.data.player, socketId: waitingSocketId, score: 0, isReady: false, answered: false, rematchRequested: false },
+              { ...player, socketId: socket.id, score: 0, isReady: false, answered: false, rematchRequested: false }
             ],
             packId,
             questionCount,
+            questions,
             phase: "matching",
             questionIndex: 0,
             questionStartTime: 0
@@ -189,17 +197,20 @@ async function startServer() {
     socket.on("create_friend_match", ({ packId, questionCount, player }) => {
       const inviteCode = Math.random().toString(36).substr(2, 6).toUpperCase();
       const roomId = `friend_${inviteCode}`;
+      const questions = generateQuestions(packId, questionCount);
       
       const roomData: MatchRoomState = {
         roomId,
         type: 'friend',
-        players: [{ ...player, socketId: socket.id, score: 0, isReady: false, answered: false }],
+        players: [{ ...player, socketId: socket.id, score: 0, isReady: false, answered: false, rematchRequested: false }],
         packId,
         questionCount,
+        questions,
         phase: "waiting_room",
         questionIndex: 0,
         questionStartTime: 0,
-        hostId: player.id
+        hostId: player.id,
+        inviteCode
       };
 
       activeRooms.set(roomId, roomData);
@@ -212,7 +223,7 @@ async function startServer() {
       const roomId = `friend_${inviteCode}`;
       const roomData = activeRooms.get(roomId);
       if (roomData && roomData.players.length < 4 && roomData.phase === "waiting_room") {
-        roomData.players.push({ ...player, socketId: socket.id, score: 0, isReady: false, answered: false });
+        roomData.players.push({ ...player, socketId: socket.id, score: 0, isReady: false, answered: false, rematchRequested: false });
         socket.join(roomId);
         broadcastState(roomId);
       } else {
@@ -224,6 +235,23 @@ async function startServer() {
       const room = activeRooms.get(roomId);
       if (room && room.players[0].socketId === socket.id) {
         startMatchedPhase(roomId);
+      }
+    });
+
+    socket.on("player_ready", ({ roomId }) => {
+      const room = activeRooms.get(roomId);
+      if (!room) return;
+
+      const player = room.players.find(p => p.socketId === socket.id);
+      if (player) {
+        player.isReady = true;
+        broadcastState(roomId);
+
+        // Check if all players are ready
+        const allReady = room.players.every(p => p.isReady);
+        if (allReady && room.phase === "matched") {
+          startLoadingPhase(roomId);
+        }
       }
     });
 
@@ -266,20 +294,40 @@ async function startServer() {
       }, 500); // Brief delay to show who answered
     });
 
-    socket.on("rematch", ({ roomId }) => {
+    socket.on("get_state", ({ roomId }) => {
       const room = activeRooms.get(roomId);
       if (room) {
-        // Reset room for rematch
-        room.phase = "countdown";
-        room.questionIndex = 0;
-        room.players.forEach(p => {
-          p.score = 0;
-          p.isReady = false;
-          p.answered = false;
-          p.lastAnswer = undefined;
-        });
+        socket.emit("state_update", room);
+      }
+    });
+
+    socket.on("request_rematch", ({ roomId }) => {
+      const room = activeRooms.get(roomId);
+      if (!room) return;
+
+      const player = room.players.find(p => p.socketId === socket.id);
+      if (player) {
+        player.rematchRequested = true;
         broadcastState(roomId);
-        startCountdown(roomId);
+
+        // Check if all players requested rematch
+        const allRequested = room.players.every(p => p.rematchRequested);
+        if (allRequested) {
+          // Generate new questions for rematch
+          room.questions = generateQuestions(room.packId, room.questionCount);
+          
+          // Reset room for rematch
+          room.phase = "matched";
+          room.questionIndex = 0;
+          room.players.forEach(p => {
+            p.score = 0;
+            p.isReady = false;
+            p.answered = false;
+            p.lastAnswer = undefined;
+            p.rematchRequested = false;
+          });
+          broadcastState(roomId);
+        }
       }
     });
 
@@ -290,6 +338,18 @@ async function startServer() {
           break;
         }
       }
+    });
+
+    socket.on("leave_room", ({ roomId }) => {
+      const room = activeRooms.get(roomId);
+      if (room) {
+        // In a real app, handle player leaving better
+        // For now, just end the game or notify the other player
+        room.phase = "finished";
+        broadcastState(roomId);
+        activeRooms.delete(roomId);
+      }
+      socket.leave(roomId);
     });
 
     socket.on("disconnect", () => {

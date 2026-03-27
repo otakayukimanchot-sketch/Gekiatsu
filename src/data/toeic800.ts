@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const TOEIC_800_WORDS: Word[] = [
   { word: 'meeting', meaning: '会議', choices: ['会議', '面接', '休憩', '終了'] },

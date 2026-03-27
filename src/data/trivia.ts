@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const TRIVIA_WORDS: Word[] = [
   { "word": "日本で一番高い山は？", "meaning": "富士山", "choices": ["富士山", "北岳", "奥穂高岳", "槍ヶ岳"] },

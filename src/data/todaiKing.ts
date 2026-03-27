@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const TODAI_KING_WORDS: Word[] = [
   { "word": "漢字で「海象」と書いて何と読む？", "meaning": "セイウチ", "choices": ["セイウチ", "アザラシ", "トド", "オットセイ"] },

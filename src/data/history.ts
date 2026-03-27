@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const HISTORY_WORDS: Word[] = [
   { word: '大化の改新の中心人物となったのは？', meaning: '中大兄皇子', choices: ['中大兄皇子', '蘇我入鹿', '聖徳太子', '藤原鎌足'] },

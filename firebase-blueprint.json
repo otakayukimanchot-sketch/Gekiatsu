@@ -53,6 +53,20 @@
     "/userProgress/{progressId}": {
       "schema": "UserProgress",
       "description": "Aggregated user progress per pack"
+    },
+    "/wrongQuestions/{questionId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "userId": { "type": "string", "description": "ID of the user" },
+          "word": { "type": "string", "description": "The word that was answered incorrectly" },
+          "meaning": { "type": "string", "description": "Correct meaning of the word" },
+          "choices": { "type": "array", "items": { "type": "string" }, "description": "Choices presented to the user" },
+          "timestamp": { "type": "string", "format": "date-time", "description": "When the error occurred" }
+        },
+        "required": ["userId", "word", "meaning", "choices", "timestamp"]
+      },
+      "description": "Tracks words that users answered incorrectly for review"
     }
   }
 }

@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const ENGLISH_TRIVIA_WORDS: Word[] = [
   {

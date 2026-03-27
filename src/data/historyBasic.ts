@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const HISTORY_BASIC_WORDS: Word[] = [
   { "word": "相沢忠洋が打製石器を発見した群馬県の遺跡は？", "meaning": "岩宿遺跡", "choices": ["岩宿遺跡", "三内丸山遺跡", "吉野ヶ里遺跡", "登呂遺跡"] },

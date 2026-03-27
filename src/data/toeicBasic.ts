@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const TOEIC_BASIC_WORDS: Word[] = [
   { "word": "accommodate", "meaning": "収容する", "choices": ["収容する", "同行する", "蓄積する", "非難する"] },

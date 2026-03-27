@@ -14,7 +14,7 @@ import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp } from './firebase';
+import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
 
 // --- Icons for Player ---
 const PLAYER_ICONS = [
@@ -49,7 +49,6 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(true);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [isRematchRequested, setIsRematchRequested] = useState(false);
   
   // Quiz State
   const [quizQuestions, setQuizQuestions] = useState<Word[]>([]);
@@ -66,14 +65,23 @@ export default function App() {
 
   // Derived Battle State
   const myState = matchState?.players?.find(p => p.id === player?.id);
-  const myScore = view === 'battle' ? (myState?.score || 0) : score;
+  const myScore = matchState ? (myState?.score || 0) : score;
   const opponent = matchState?.players?.find(p => p.id !== player?.id);
   const opponentScore = opponent?.score || 0;
   const opponentAnswer = opponent?.lastAnswer;
+  const isRematchRequested = !!myState?.rematchRequested;
 
   const socketRef = useRef<Socket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const bgmRef = useRef<HTMLAudioElement | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
+
+  // --- Scroll to top on view change ---
+  useEffect(() => {
+    if (mainRef.current) {
+      mainRef.current.scrollTo(0, 0);
+    }
+  }, [view]);
 
   // --- Splash Setup ---
   useEffect(() => {
@@ -193,6 +201,11 @@ export default function App() {
       setMatchState(state);
     });
 
+    socketRef.current.on('friend_match_created', ({ inviteCode }) => {
+      setInviteCode(inviteCode);
+      setView('friend_match_waiting');
+    });
+
     socketRef.current.on('error', ({ message }) => {
       alert(message);
       setView('home');
@@ -209,12 +222,19 @@ export default function App() {
 
     const state = matchState;
 
+    // Capture invite code whenever it's available in the state
+    if (state.inviteCode) {
+      setInviteCode(state.inviteCode);
+    }
+
     // Handle view transitions based on phase
     if (state.phase === 'matching') {
       setView('matching');
+      setQuizQuestions([]);
     } else if (state.phase === 'matched') {
       setView('battle_start');
       setCountdown(null);
+      setQuizQuestions([]);
     } else if (state.phase === 'loading') {
       setView('battle_start');
     } else if (state.phase === 'waiting_room') {
@@ -236,10 +256,14 @@ export default function App() {
       
       // Prepare questions if not already done
       if (quizQuestions.length === 0 && state.packId) {
-        const pack = PACKS.find(p => p.id === state.packId);
-        if (pack) {
-          setSelectedPack(pack);
-          prepareQuestions(pack, state.questionCount, state.roomId);
+        if (state.questions && state.questions.length > 0) {
+          setQuizQuestions(state.questions);
+        } else {
+          const pack = PACKS.find(p => p.id === state.packId);
+          if (pack) {
+            setSelectedPack(pack);
+            prepareQuestions(pack, state.questionCount, state.roomId);
+          }
         }
       }
     } else if (state.phase === 'result') {
@@ -302,10 +326,11 @@ export default function App() {
     
     setSelectedChoice(choice);
     
-    if (!isCorrect && player?.id) {
+    if (!isCorrect && player?.id && auth.currentUser) {
       // Save wrong question to Firestore (lightweight)
+      const qId = `${player.id}_${currentWord.word.replace(/\s+/g, '_')}`;
+      const path = `wrongQuestions/${qId}`;
       try {
-        const qId = `${player.id}_${currentWord.word.replace(/\s+/g, '_')}`;
         await setDoc(doc(db, 'wrongQuestions', qId), {
           userId: player.id,
           word: currentWord.word,
@@ -314,7 +339,7 @@ export default function App() {
           timestamp: serverTimestamp()
         });
       } catch (e) {
-        console.error("Error saving wrong question:", e);
+        handleFirestoreError(e, OperationType.WRITE, path);
       }
     }
 
@@ -363,6 +388,7 @@ export default function App() {
   };
 
   const startTraining = (count: number) => {
+    setMatchState(null);
     setQuestionCount(count);
     setIsLoading(true);
     setView('training');
@@ -395,6 +421,18 @@ export default function App() {
     }
   };
 
+  const handleQuit = () => {
+    if (view === 'battle' && matchState?.roomId) {
+      socketRef.current?.emit('leave_room', { roomId: matchState.roomId });
+    }
+    setView('home');
+    setMatchState(null);
+    setQuizQuestions([]);
+    setCurrentIndex(0);
+    setScore(0);
+    setWrongCount(0);
+  };
+
   const handleSuggestionSubmit = async (type: string, content: string) => {
     if (!content.trim()) return;
     // Mocking submission for keyless version
@@ -425,6 +463,15 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {(view === 'training' || view === 'battle') && (
+            <button 
+              onClick={handleQuit}
+              className="flex items-center gap-1 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-black text-xs hover:bg-red-100 transition-all border border-red-100"
+            >
+              <XCircle className="w-4 h-4" />
+              <span>中断</span>
+            </button>
+          )}
           <button 
             onClick={() => setIsMuted(!isMuted)}
             className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
@@ -448,7 +495,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto pokepoke-scroll">
+      <main ref={mainRef} className="flex-1 overflow-y-auto pokepoke-scroll">
         <AnimatePresence mode="wait">
           {view === 'home' && (
             <HomeView 
@@ -554,14 +601,30 @@ export default function App() {
           )}
           {view === 'result' && (
             <ResultView 
-              mode={view === 'battle' ? 'battle' : 'training'}
+              mode={matchState ? 'battle' : 'training'}
               score={myScore} 
               wrongCount={wrongCount}
               total={quizQuestions.length} 
               timeTaken={Math.floor((endTime - startTime) / 1000)}
               opponentScore={opponentScore}
-              onRetry={() => view === 'battle' ? setView('home') : startTraining(questionCount)}
-              onHome={() => setView('home')}
+              onRetry={() => {
+                if (matchState) {
+                  if (matchState.roomId) {
+                    socketRef.current?.emit('leave_room', { roomId: matchState.roomId });
+                  }
+                  setMatchState(null);
+                  setView('home');
+                } else {
+                  startTraining(questionCount);
+                }
+              }}
+              onHome={() => {
+                if (matchState?.roomId) {
+                  socketRef.current?.emit('leave_room', { roomId: matchState.roomId });
+                }
+                setMatchState(null);
+                setView('home');
+              }}
               isRematchRequested={isRematchRequested}
               onRematch={() => socketRef.current?.emit('request_rematch', { roomId: matchState?.roomId })}
               matchState={matchState}
@@ -606,6 +669,15 @@ function SplashView({ progress }: { progress: number }) {
 function BattleStartView({ player, opponent, countdown, onReady, matchState }: { player: Player, opponent: Player, countdown: number | null, onReady: () => void, matchState: MatchRoomState | null }) {
   const [isReady, setIsReady] = useState(false);
 
+  useEffect(() => {
+    if (matchState?.phase === 'matched') {
+      setIsReady(false);
+    }
+  }, [matchState?.phase]);
+
+  const opponentState = matchState?.players?.find(p => p.id === opponent.id);
+  const isOpponentReady = !!opponentState?.isReady;
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -643,7 +715,13 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
               <h2 className="text-6xl font-black text-white tracking-tighter mb-2 uppercase italic">
                 {matchState?.phase === 'matched' ? 'matched!' : 'matching!'}
               </h2>
-              <div className="h-1 w-24 bg-indigo-500 mx-auto rounded-full"></div>
+              <div className="h-1 w-24 bg-indigo-500 mx-auto rounded-full mb-4"></div>
+              {matchState?.type === 'friend' && matchState.inviteCode && (
+                <div className="bg-white/10 backdrop-blur-md px-6 py-4 rounded-3xl border border-white/20 inline-flex flex-col items-center gap-1">
+                  <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Invite Code</p>
+                  <p className="text-4xl font-black text-white tracking-[0.2em] leading-none">{matchState.inviteCode}</p>
+                </div>
+              )}
             </motion.div>
 
             <div className="flex items-center gap-8 md:gap-16 mb-12">
@@ -657,7 +735,10 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
                   <div className="absolute inset-0 bg-indigo-50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                   {React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: "w-14 h-14 text-indigo-600 relative z-10" })}
                 </div>
-                <p className="text-white font-black text-2xl tracking-tight">{player.name}</p>
+                <div className="flex flex-col items-center">
+                  <p className="text-white font-black text-2xl tracking-tight">{player.name}</p>
+                  {isReady && <span className="text-emerald-400 text-[10px] font-black uppercase tracking-widest mt-1">READY</span>}
+                </div>
               </motion.div>
 
               <motion.div 
@@ -684,7 +765,10 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
                   <div className="absolute inset-0 bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                   {React.createElement(PLAYER_ICONS.find(i => i.id === opponent.icon)?.icon || Smile, { className: "w-14 h-14 text-red-600 relative z-10" })}
                 </div>
-                <p className="text-white font-black text-2xl tracking-tight">{opponent.name}</p>
+                <div className="flex flex-col items-center">
+                  <p className="text-white font-black text-2xl tracking-tight">{opponent.name}</p>
+                  {isOpponentReady && <span className="text-emerald-400 text-[10px] font-black uppercase tracking-widest mt-1">READY</span>}
+                </div>
               </motion.div>
             </div>
 
@@ -882,12 +966,13 @@ function QuizView({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
               className="fixed inset-0 flex items-center justify-center bg-white/95 backdrop-blur-xl z-[100]"
             >
               <motion.div
-                initial={{ scale: 0, rotate: -45 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", damping: 12, stiffness: 200 }}
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", damping: 20, stiffness: 300 }}
                 className="flex flex-col items-center w-full px-6"
               >
                 {matchState?.phase === 'result' ? (
@@ -927,22 +1012,15 @@ function QuizView({
                 ) : answerStatus === 'correct' ? (
                   <>
                     <motion.div 
-                      animate={{ 
-                        scale: [1, 1.2, 1],
-                        rotate: [0, 10, -10, 0]
-                      }}
-                      transition={{ duration: 0.5 }}
+                      animate={{ scale: [1, 1.1, 1] }}
+                      transition={{ duration: 0.2 }}
                       className="w-40 h-40 rounded-full bg-emerald-100 flex items-center justify-center mb-6 shadow-2xl shadow-emerald-200"
                     >
                       <CheckCircle2 className="w-24 h-24 text-emerald-500" />
                     </motion.div>
-                    <motion.p 
-                      initial={{ y: 20, opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      className="text-6xl font-black text-emerald-600 tracking-tighter drop-shadow-sm"
-                    >
-                      EXCELLENT!
-                    </motion.p>
+                    <p className="text-6xl font-black text-emerald-600 tracking-tighter drop-shadow-sm">
+                      CORRECT!
+                    </p>
                   </>
                 ) : answerStatus === 'opponent_won' ? (
                   <>
@@ -955,8 +1033,8 @@ function QuizView({
                 ) : (
                   <>
                     <motion.div 
-                      animate={{ x: [-10, 10, -10, 10, 0] }}
-                      transition={{ duration: 0.4 }}
+                      animate={{ x: [-5, 5, -5, 5, 0] }}
+                      transition={{ duration: 0.2 }}
                       className="w-40 h-40 rounded-full bg-red-100 flex items-center justify-center mb-6 shadow-2xl shadow-red-200"
                     >
                       <XCircle className="w-24 h-24 text-red-500" />
@@ -966,26 +1044,6 @@ function QuizView({
                   </>
                 )}
               </motion.div>
-              
-              {/* Particle effects for correct answer */}
-              {answerStatus === 'correct' && (
-                <div className="absolute inset-0 pointer-events-none">
-                  {[...Array(12)].map((_, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ x: 0, y: 0, scale: 0 }}
-                      animate={{ 
-                        x: (Math.random() - 0.5) * 400, 
-                        y: (Math.random() - 0.5) * 400,
-                        scale: [0, 1, 0],
-                        rotate: Math.random() * 360
-                      }}
-                      transition={{ duration: 1, ease: "easeOut" }}
-                      className="absolute left-1/2 top-1/2 w-4 h-4 bg-emerald-400 rounded-sm"
-                    />
-                  ))}
-                </div>
-              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1589,9 +1647,9 @@ function FriendMatchWaitingView({ inviteCode, onCancel, matchState, player, onSt
           <QRCodeSVG value={joinUrl} size={200} />
         </div>
 
-        <div className="bg-slate-50 p-4 rounded-2xl mb-8">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Invite Code</p>
-          <p className="text-4xl font-black text-slate-900 tracking-widest">{inviteCode}</p>
+        <div className="bg-slate-50 p-6 rounded-3xl mb-8 relative group border-2 border-slate-100">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invite Code</p>
+          <p className="text-5xl font-black text-slate-900 tracking-[0.2em] leading-none">{inviteCode}</p>
         </div>
 
         <div className="space-y-3 mb-8">
@@ -1752,6 +1810,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   const isDraw = mode === 'battle' && opponentScore !== undefined && score === opponentScore;
   const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
 
+  const opponent = matchState?.players?.find(p => p.id !== player?.id);
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -1759,67 +1819,79 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
       className="p-6 max-w-2xl mx-auto w-full"
     >
       <div className="bg-white rounded-[3rem] p-8 md:p-12 shadow-2xl border border-slate-100 text-center relative overflow-hidden">
-        {isWin && !isDraw && <div className="absolute top-0 left-0 w-full h-2 bg-emerald-500"></div>}
-        {!isWin && !isDraw && <div className="absolute top-0 left-0 w-full h-2 bg-red-500"></div>}
-        {isDraw && <div className="absolute top-0 left-0 w-full h-2 bg-indigo-500"></div>}
-
-        <div className="mb-8">
-          {mode === 'battle' ? (
-            isWin && !isDraw ? (
-              <div className="inline-flex items-center gap-2 px-6 py-2 bg-emerald-50 text-emerald-600 rounded-full font-black uppercase tracking-widest text-sm mb-4">
-                <CheckCircle2 className="w-5 h-5" /> Victory!
+        {mode === 'battle' ? (
+          <>
+            {/* Top Section: Scores */}
+            <div className="flex justify-between items-center mb-12 px-4">
+              <div className="flex flex-col items-center gap-2">
+                <div className="text-5xl font-black text-indigo-600">{score}</div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Your Score</div>
               </div>
-            ) : isDraw ? (
-              <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-50 text-indigo-600 rounded-full font-black uppercase tracking-widest text-sm mb-4">
-                <RotateCcw className="w-5 h-5" /> Draw!
+              <div className="h-12 w-px bg-slate-100"></div>
+              <div className="flex flex-col items-center gap-2">
+                <div className="text-5xl font-black text-red-600">{opponentScore ?? 0}</div>
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opponent</div>
               </div>
-            ) : (
-              <div className="inline-flex items-center gap-2 px-6 py-2 bg-red-50 text-red-600 rounded-full font-black uppercase tracking-widest text-sm mb-4">
-                <XCircle className="w-5 h-5" /> Defeat
-              </div>
-            )
-          ) : (
-            <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-50 text-indigo-600 rounded-full font-black uppercase tracking-widest text-sm mb-4">
-              <Trophy className="w-5 h-5" /> Training Complete
             </div>
-          )}
-          <h2 className="text-6xl font-black text-slate-900 tracking-tighter mb-2">
-            {score}<span className="text-2xl text-slate-300"> / {total}</span>
-          </h2>
-          <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Final Score</p>
-        </div>
 
-        {mode === 'battle' && matchState ? (
-          <div className="space-y-4 mb-12">
-            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Final Standings</h3>
-            <div className="space-y-3">
-              {[...matchState.players].sort((a, b) => b.score - a.score).map((p, idx) => (
-                <div key={p.id} className={`flex items-center justify-between p-4 rounded-2xl border-2 ${p.id === player?.id ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-100'}`}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-black text-xs">
-                      {idx + 1}
-                    </div>
-                    <div className="text-left">
-                      <p className="text-xs font-black text-slate-400 uppercase leading-none mb-1">{p.name}</p>
-                      <p className="text-lg font-black text-slate-900 leading-none">{p.score} pts</p>
-                    </div>
-                  </div>
-                  {idx === 0 && <Crown className="w-6 h-6 text-yellow-500" />}
+            {/* Middle Section: Icons and WIN/LOSE */}
+            <div className="flex items-center justify-center gap-8 md:gap-16 mb-8">
+              {/* Player */}
+              <div className="flex flex-col items-center gap-4">
+                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative ${isWin && !isDraw ? 'bg-emerald-50 ring-4 ring-emerald-500' : 'bg-slate-50'}`}>
+                  {player && React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: `w-12 h-12 ${isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
+                  {isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
                 </div>
-              ))}
+                <div className={`font-black text-2xl italic uppercase tracking-tighter ${isWin && !isDraw ? 'text-emerald-600' : isDraw ? 'text-indigo-600' : 'text-slate-400'}`}>
+                  {isDraw ? 'DRAW' : isWin ? 'WIN' : 'LOSE'}
+                </div>
+              </div>
+
+              <div className="text-4xl font-black text-slate-200 italic">VS</div>
+
+              {/* Opponent */}
+              <div className="flex flex-col items-center gap-4">
+                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative ${!isWin && !isDraw ? 'bg-emerald-50 ring-4 ring-emerald-500' : 'bg-slate-50'}`}>
+                  {opponent && React.createElement(PLAYER_ICONS.find(i => i.id === opponent.icon)?.icon || Smile, { className: `w-12 h-12 ${!isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
+                  {!isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
+                </div>
+                <div className={`font-black text-2xl italic uppercase tracking-tighter ${!isWin && !isDraw ? 'text-emerald-600' : isDraw ? 'text-indigo-600' : 'text-slate-400'}`}>
+                  {isDraw ? 'DRAW' : !isWin ? 'WIN' : 'LOSE'}
+                </div>
+              </div>
             </div>
-          </div>
+
+            {/* Invite Code for Friend Match */}
+            {matchState?.type === 'friend' && matchState.inviteCode && (
+              <div className="mb-12 bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 inline-block">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invite Code</p>
+                <p className="text-4xl font-black text-slate-900 tracking-[0.2em] leading-none">{matchState.inviteCode}</p>
+              </div>
+            )}
+          </>
         ) : (
-          <div className="grid grid-cols-2 gap-4 mb-12">
-            <div className="bg-slate-50 p-4 rounded-3xl">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Accuracy</p>
-              <p className="text-xl font-black text-slate-900">{accuracy}%</p>
+          <>
+            <div className="mb-8">
+              <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-50 text-indigo-600 rounded-full font-black uppercase tracking-widest text-sm mb-4">
+                <Trophy className="w-5 h-5" /> Training Complete
+              </div>
+              <h2 className="text-6xl font-black text-slate-900 tracking-tighter mb-2">
+                {score}<span className="text-2xl text-slate-300"> / {total}</span>
+              </h2>
+              <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Final Score</p>
             </div>
-            <div className="bg-slate-50 p-4 rounded-3xl">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Incorrect</p>
-              <p className="text-xl font-black text-red-500">{wrongCount}</p>
+
+            <div className="grid grid-cols-2 gap-4 mb-12">
+              <div className="bg-slate-50 p-4 rounded-3xl">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Accuracy</p>
+                <p className="text-xl font-black text-slate-900">{accuracy}%</p>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-3xl">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Incorrect</p>
+                <p className="text-xl font-black text-red-500">{wrongCount}</p>
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         <div className="flex flex-col gap-3">

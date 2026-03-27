@@ -1,4 +1,4 @@
-import { Word } from '../types';
+import type { Word } from '../types.ts';
 
 export const HIGH_LEVEL_TRIVIA_WORDS: Word[] = [
   { "word": "月面で人類で初めてゴルフのスイングをしたアポロ14号の宇宙飛行士は誰？", "meaning": "アラン・シェパード", "choices": ["アラン・シェパード", "ニール・アームストロング", "バズ・オルドリン", "ユーリ・ガガーリン"] },

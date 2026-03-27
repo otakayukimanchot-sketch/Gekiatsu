@@ -24,6 +24,7 @@ export interface PlayerState extends Player {
   socketId: string;
   isReady: boolean;
   answered: boolean;
+  rematchRequested?: boolean;
   lastAnswer?: {
     choice: string;
     isCorrect: boolean;
@@ -41,6 +42,7 @@ export interface MatchRoomState {
   phase: 'matching' | 'matched' | 'loading' | 'waiting_room' | 'countdown' | 'question' | 'answering' | 'result' | 'finished';
   questionIndex: number;
   questionStartTime: number;
+  questions: Word[];
   inviteCode?: string;
   countdown?: number;
   firstResponder?: string; // playerId
