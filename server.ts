@@ -9,13 +9,14 @@ import { PACKS } from "./src/constants.ts";
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
-  const frontendUrl = process.env.VITE_FRONTEND_URL || "*";
+  const frontendUrl = process.env.VITE_FRONTEND_URL;
 
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: {
-      origin: frontendUrl,
-      methods: ["GET", "POST"]
+      origin: frontendUrl ? [frontendUrl, frontendUrl.replace(/\/$/, "")] : "*",
+      methods: ["GET", "POST"],
+      credentials: true
     },
   });
 

@@ -193,10 +193,25 @@ export default function App() {
   // --- Socket Setup ---
   useEffect(() => {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
-    socketRef.current = io(backendUrl);
+    socketRef.current = io(backendUrl, {
+      transports: ['websocket'],
+      withCredentials: true
+    });
     
-    socketRef.current.on('connect', () => setIsOnline(true));
-    socketRef.current.on('disconnect', () => setIsOnline(false));
+    socketRef.current.on('connect', () => {
+      console.log('Connected to server:', backendUrl || 'local');
+      setIsOnline(true);
+    });
+    
+    socketRef.current.on('connect_error', (err) => {
+      console.error('Connection error:', err.message);
+      setIsOnline(false);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('Disconnected from server');
+      setIsOnline(false);
+    });
 
     socketRef.current.on('state_update', (state: MatchRoomState) => {
       setMatchState(state);
