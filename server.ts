@@ -8,14 +8,16 @@ import { PACKS } from "./src/constants.ts";
 
 async function startServer() {
   const app = express();
+  const PORT = Number(process.env.PORT) || 3000;
+  const frontendUrl = process.env.VITE_FRONTEND_URL || "*";
+
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: {
-      origin: "*",
+      origin: frontendUrl,
+      methods: ["GET", "POST"]
     },
   });
-
-  const PORT = Number(process.env.PORT) || 3000;
 
   // Game state in memory
   const matchingPool = new Map<string, string>(); // key: packId_questionCount, value: socketId

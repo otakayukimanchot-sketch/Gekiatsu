@@ -192,7 +192,8 @@ export default function App() {
 
   // --- Socket Setup ---
   useEffect(() => {
-    socketRef.current = io();
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    socketRef.current = io(backendUrl);
     
     socketRef.current.on('connect', () => setIsOnline(true));
     socketRef.current.on('disconnect', () => setIsOnline(false));
