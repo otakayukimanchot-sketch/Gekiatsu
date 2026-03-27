@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { 
   Smile, Ghost, Rocket, Gamepad2, Zap, 
   Wifi, WifiOff, Trophy, Home, RotateCcw, 
@@ -294,7 +294,14 @@ export default function App() {
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
 
-    const selected = shuffled.slice(0, count);
+    const selected = shuffled.slice(0, count).map(word => {
+      const wordChoices = [...word.choices];
+      for (let i = wordChoices.length - 1; i > 0; i--) {
+        const j = Math.floor(seededRandom() * (i + 1));
+        [wordChoices[i], wordChoices[j]] = [wordChoices[j], wordChoices[i]];
+      }
+      return { ...word, choices: wordChoices };
+    });
     setQuizQuestions(selected);
     
     // Only reset to 0 if we are in training or if it's the start of a match
@@ -1699,25 +1706,39 @@ function FriendMatchWaitingView({ inviteCode, onCancel, matchState, player, onSt
 function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (code: string) => void }) {
   const [code, setCode] = useState('');
   const [isScanning, setIsScanning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let scanner: Html5QrcodeScanner | null = null;
+    let html5QrCode: Html5Qrcode | null = null;
+    
     if (isScanning) {
-      scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
-      scanner.render((decodedText) => {
-        // Extract code from URL if it's a full URL
-        const match = decodedText.match(/\/join\/([A-Z0-9]+)/);
-        const extractedCode = match ? match[1] : decodedText;
-        onJoin(extractedCode);
-        scanner?.clear();
+      setError(null);
+      html5QrCode = new Html5Qrcode("reader");
+      
+      const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+      
+      html5QrCode.start(
+        { facingMode: "environment" }, 
+        config, 
+        (decodedText) => {
+          const match = decodedText.match(/\/join\/([A-Z0-9]+)/);
+          const extractedCode = match ? match[1] : decodedText;
+          onJoin(extractedCode);
+          html5QrCode?.stop().then(() => {
+            setIsScanning(false);
+          }).catch(err => console.error("Stop error", err));
+        },
+        undefined
+      ).catch(err => {
+        console.error("Start error", err);
+        setError("カメラの起動に失敗しました。設定を確認してください。");
         setIsScanning(false);
-      }, (error) => {
-        // console.warn(error);
       });
     }
+
     return () => {
-      if (scanner) {
-        scanner.clear().catch(e => console.error("Failed to clear scanner", e));
+      if (html5QrCode && html5QrCode.isScanning) {
+        html5QrCode.stop().catch(e => console.error("Cleanup stop error", e));
       }
     };
   }, [isScanning, onJoin]);
@@ -1733,6 +1754,12 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
       </button>
 
       <h2 className="text-3xl font-black text-slate-900 mb-8 tracking-tighter uppercase">Join Match</h2>
+
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border-2 border-red-100 rounded-2xl text-red-600 font-bold text-sm">
+          {error}
+        </div>
+      )}
 
       <div className="space-y-6">
         <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100">
@@ -1778,7 +1805,7 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
             </button>
           ) : (
             <div className="space-y-4">
-              <div id="reader" className="overflow-hidden rounded-2xl bg-black"></div>
+              <div id="reader" className="overflow-hidden rounded-2xl bg-black aspect-square"></div>
               <button 
                 onClick={() => setIsScanning(false)}
                 className="text-white/50 font-black text-xs uppercase tracking-widest hover:text-white transition-colors"

@@ -27,7 +27,10 @@ async function startServer() {
     
     // Shuffle and pick
     const shuffled = [...pack.words].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count);
+    return shuffled.slice(0, count).map(word => ({
+      ...word,
+      choices: [...word.choices].sort(() => Math.random() - 0.5)
+    }));
   };
 
   const broadcastState = (roomId: string) => {
