@@ -2127,30 +2127,13 @@ function SetupView({ onComplete, isMuted, onToggleMute }: { onComplete: (name: s
           {isMuted ? <VolumeX className="w-6 h-6 text-slate-400" /> : <Volume2 className="w-6 h-6 text-indigo-600" />}
         </button>
       </div>
-      {/* Animated Background */}
-      <div className="absolute inset-0 z-0">
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.1, 1],
-            opacity: [0.1, 0.2, 0.1]
-          }}
-          transition={{ duration: 10, repeat: Infinity }}
-          className="absolute -top-1/4 -left-1/4 w-full h-full bg-indigo-50 rounded-full blur-[100px]"
-        />
-        <motion.div 
-          animate={{ 
-            scale: [1.1, 1, 1.1],
-            opacity: [0.1, 0.2, 0.1]
-          }}
-          transition={{ duration: 12, repeat: Infinity }}
-          className="absolute -bottom-1/4 -right-1/4 w-full h-full bg-slate-50 rounded-full blur-[100px]"
-        />
-      </div>
+      {/* Animated Background - Removed as requested */}
+      <div className="absolute inset-0 z-0 bg-slate-50/50"></div>
 
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-white/80 backdrop-blur-xl rounded-[3rem] p-8 md:p-12 w-full max-w-md shadow-2xl border border-slate-100 relative z-10"
+        className="bg-white/80 backdrop-blur-xl rounded-[3rem] p-8 md:p-12 w-full max-w-md relative z-10"
       >
         <div className="text-center mb-10">
           <motion.div

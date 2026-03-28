@@ -15,6 +15,8 @@ import { USAGE_WORDS } from './data/usage.ts';
 import { EDO_CASTLE_WORDS } from './data/edoCastle.ts';
 import { ENGLISH_TRIVIA_WORDS } from './data/englishTrivia.ts';
 import { ATTACK25_WORDS } from './data/attack25.ts';
+import { CONFUSING_C_WORDS } from './data/confusingC.ts';
+import { CONFUSING_IDIOMS_WORDS } from './data/confusingIdioms.ts';
 
 export const PACKS: Pack[] = [
   {
@@ -144,5 +146,21 @@ export const PACKS: Pack[] = [
     category: '雑学',
     color: 'bg-gradient-to-br from-red-500 to-orange-600',
     words: ATTACK25_WORDS,
+  },
+  {
+    id: 'confusing-c',
+    name: 'Cから始まる紛らわしい単語',
+    description: 'complement/complimentなど、Cから始まる紛らわしい単語をマスター。',
+    category: '英語',
+    color: 'bg-gradient-to-br from-violet-500 to-purple-600',
+    words: CONFUSING_C_WORDS,
+  },
+  {
+    id: 'confusing-idioms',
+    name: '紛らわしい英熟語',
+    description: 'look after/look forなど、意味を間違えやすい英熟語をマスター。',
+    category: '英語',
+    color: 'bg-gradient-to-br from-teal-500 to-emerald-600',
+    words: CONFUSING_IDIOMS_WORDS,
   },
 ];
