@@ -61,11 +61,11 @@ export default function App() {
   const [startTime, setStartTime] = useState<number>(0);
   const [endTime, setEndTime] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState(10);
-  const [answerStatus, setAnswerStatus] = useState<'idle' | 'correct' | 'wrong' | 'timeout'>('idle');
+  const [answerStatus, setAnswerStatus] = useState<'idle' | 'correct' | 'wrong' | 'timeout' | 'opponent_won'>('idle');
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [answerHistory, setAnswerHistory] = useState<{ word: string, isCorrect: boolean }[]>([]);
+  const [answerHistory, setAnswerHistory] = useState<{ word: string, status: 'correct' | 'wrong' | 'lost' }[]>([]);
 
   // Derived Battle State
   const myState = matchState?.players?.find(p => p.id === player?.id);
@@ -283,10 +283,27 @@ export default function App() {
       
       // If question index changed, reset local answer state
       if (state.questionIndex !== currentIndex) {
+        // Record previous question as wrong if not already recorded
+        if (quizQuestions[currentIndex] && answerHistory.length <= currentIndex) {
+          setAnswerHistory(prev => [...prev, { word: quizQuestions[currentIndex].word, status: 'wrong' }]);
+        }
         setCurrentIndex(state.questionIndex);
         setAnswerStatus('idle');
         setSelectedChoice(null);
         setTimeLeft(10);
+      }
+
+      // Check if opponent won the current question
+      const opponent = state.players.find(p => p.id !== player?.id);
+      if (opponent?.lastAnswer?.questionIndex === state.questionIndex && opponent.lastAnswer.isCorrect) {
+        if (answerStatus === 'idle') {
+          setAnswerStatus('opponent_won');
+          playSound('wrong');
+          const currentWord = quizQuestions[state.questionIndex];
+          if (currentWord && answerHistory.length <= state.questionIndex) {
+            setAnswerHistory(prev => [...prev, { word: currentWord.word, status: 'lost' }]);
+          }
+        }
       }
       
       // Prepare questions if not already done
@@ -367,7 +384,9 @@ export default function App() {
     const isCorrect = choice === currentWord.meaning;
     
     setSelectedChoice(choice);
-    setAnswerHistory(prev => [...prev, { word: currentWord.word, isCorrect }]);
+    if (answerHistory.length <= currentIndex) {
+      setAnswerHistory(prev => [...prev, { word: currentWord.word, status: isCorrect ? 'correct' : 'wrong' }]);
+    }
     
     if (view === 'battle') {
       socketRef.current?.emit('answer', {
@@ -1864,7 +1883,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   onRematch?: () => void,
   matchState?: MatchRoomState | null,
   player?: Player | null,
-  answerHistory: { word: string, isCorrect: boolean }[]
+  answerHistory: { word: string, status: 'correct' | 'wrong' | 'lost' }[]
 }) {
   const isWin = mode === 'battle' ? (opponentScore !== undefined && score > opponentScore) : true;
   const isDraw = mode === 'battle' && opponentScore !== undefined && score === opponentScore;
@@ -1990,8 +2009,12 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
               {answerHistory.map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                   <span className="font-black text-slate-700 tracking-tight">{item.word}</span>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-lg ${item.isCorrect ? 'text-emerald-500 bg-emerald-50' : 'text-red-500 bg-red-50'}`}>
-                    {item.isCorrect ? '〇' : '×'}
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-lg ${
+                    item.status === 'correct' ? 'text-emerald-500 bg-emerald-50' : 
+                    item.status === 'lost' ? 'text-orange-500 bg-orange-50' : 
+                    'text-red-500 bg-red-50'
+                  }`}>
+                    {item.status === 'correct' ? '〇' : item.status === 'lost' ? '△' : '×'}
                   </div>
                 </div>
               ))}
