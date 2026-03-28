@@ -14,7 +14,7 @@ import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
+import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
 
 // --- Icons for Player ---
 const PLAYER_ICONS = [
@@ -40,9 +40,12 @@ const playSound = (type: 'correct' | 'wrong' | 'click') => {
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [loadProgress, setLoadProgress] = useState(0);
-  const [view, setView] = useState<'setup' | 'home' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join'>('setup');
+  const [view, setView] = useState<'setup' | 'tutorial' | 'home' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join'>('setup');
   const [player, setPlayer] = useState<Player | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [hasSeenTutorial, setHasSeenTutorial] = useState<boolean>(() => {
+    return localStorage.getItem('pokepoke_tutorial_seen') === 'true';
+  });
   const [selectedPack, setSelectedPack] = useState<Pack | null>(PACKS[0]);
   const [questionCount, setQuestionCount] = useState<number>(50);
   const [matchState, setMatchState] = useState<MatchRoomState | null>(null);
@@ -161,7 +164,13 @@ export default function App() {
           name: user.displayName || 'Player',
           icon: 'smile' // Default icon for Google users
         });
-        setView('home');
+        
+        // Show tutorial if not seen
+        if (localStorage.getItem('pokepoke_tutorial_seen') !== 'true') {
+          setView('tutorial');
+        } else {
+          setView('home');
+        }
       } else {
         setPlayer(null);
         setView('setup');
@@ -360,23 +369,6 @@ export default function App() {
     setSelectedChoice(choice);
     setAnswerHistory(prev => [...prev, { word: currentWord.word, isCorrect }]);
     
-    if (!isCorrect && player?.id && auth.currentUser) {
-      // Save wrong question to Firestore (lightweight)
-      const qId = `${player.id}_${currentWord.word.replace(/\s+/g, '_')}`;
-      const path = `wrongQuestions/${qId}`;
-      try {
-        await setDoc(doc(db, 'wrongQuestions', qId), {
-          userId: player.id,
-          word: currentWord.word,
-          meaning: currentWord.meaning,
-          choices: currentWord.choices,
-          timestamp: serverTimestamp()
-        });
-      } catch (e) {
-        handleFirestoreError(e, OperationType.WRITE, path);
-      }
-    }
-
     if (view === 'battle') {
       socketRef.current?.emit('answer', {
         roomId: matchState?.roomId,
@@ -418,7 +410,12 @@ export default function App() {
     };
     setPlayer(newPlayer);
     localStorage.setItem('pokepoke_player', JSON.stringify(newPlayer));
-    setView('home');
+    
+    if (localStorage.getItem('pokepoke_tutorial_seen') !== 'true') {
+      setView('tutorial');
+    } else {
+      setView('home');
+    }
   };
 
   const startTraining = (count: number) => {
@@ -480,6 +477,15 @@ export default function App() {
   if (showSplash) return <SplashView progress={loadProgress} />;
   if (!isAuthReady) return <div className="min-h-screen flex items-center justify-center bg-indigo-600 text-white font-black">LOADING...</div>;
   if (view === 'setup') return <SetupView onComplete={handleSetup} isMuted={isMuted} onToggleMute={() => setIsMuted(!isMuted)} />;
+  if (view === 'tutorial') return (
+    <TutorialView 
+      onSkip={() => {
+        localStorage.setItem('pokepoke_tutorial_seen', 'true');
+        setHasSeenTutorial(true);
+        setView('home');
+      }} 
+    />
+  );
   
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -505,6 +511,13 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setView('tutorial')}
+            className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+            title="How to Use"
+          >
+            <Info className="w-5 h-5" />
+          </button>
           {(view === 'training' || view === 'battle') && (
             <button 
               onClick={handleQuit}
@@ -1973,7 +1986,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
         {answerHistory.length > 0 && (
           <div className="mt-12 pt-12 border-t border-slate-100">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Review Questions</h3>
-            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 pokepoke-scroll">
+            <div className="space-y-3 pr-2">
               {answerHistory.map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                   <span className="font-black text-slate-700 tracking-tight">{item.word}</span>
@@ -1987,6 +2000,84 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
         )}
       </div>
     </motion.div>
+  );
+}
+
+function TutorialView({ onSkip }: { onSkip: () => void }) {
+  const [step, setStep] = useState(0);
+  const steps = [
+    {
+      title: "激アツ英単語へようこそ！",
+      desc: "このアプリは、ハイスピードで英単語をマスターし、ライバルと競い合うバトルアプリです。",
+      icon: Zap,
+      color: "bg-orange-500"
+    },
+    {
+      title: "トレーニングモード",
+      desc: "一人でじっくり語彙力を鍛えましょう。好きなパックと問題数を選んでスタート！",
+      icon: Play,
+      color: "bg-indigo-600"
+    },
+    {
+      title: "リアルタイム対戦",
+      desc: "オンラインで他のプレイヤーと対戦！スピードと正確さが勝利の鍵です。",
+      icon: Trophy,
+      color: "bg-emerald-500"
+    },
+    {
+      title: "フレンドマッチ",
+      desc: "ルームを作成して、QRコードやリンクで友達を招待！プライベートな対戦が楽しめます。",
+      icon: Users,
+      color: "bg-purple-500"
+    }
+  ];
+
+  const current = steps[step];
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 font-sans">
+      <motion.div 
+        key={step}
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="w-full max-w-md bg-white rounded-[3rem] p-12 shadow-2xl border border-slate-100 text-center relative overflow-hidden"
+      >
+        <div className={`w-24 h-24 ${current.color} rounded-[2rem] flex items-center justify-center mx-auto mb-8 shadow-lg`}>
+          <current.icon className="w-12 h-12 text-white" />
+        </div>
+        
+        <h2 className="text-3xl font-black text-slate-900 mb-4 tracking-tighter uppercase">{current.title}</h2>
+        <p className="text-slate-500 font-bold leading-relaxed mb-12">{current.desc}</p>
+
+        <div className="flex flex-col gap-4">
+          <button 
+            onClick={() => {
+              if (step < steps.length - 1) setStep(step + 1);
+              else onSkip();
+            }}
+            className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95"
+          >
+            {step === steps.length - 1 ? 'スタート！' : '次へ'}
+          </button>
+          <button 
+            onClick={onSkip}
+            className="text-slate-400 font-black text-sm uppercase tracking-widest hover:text-slate-600 transition-colors"
+          >
+            チュートリアルをスキップ
+          </button>
+        </div>
+
+        {/* Progress Dots */}
+        <div className="flex justify-center gap-2 mt-8">
+          {steps.map((_, i) => (
+            <div 
+              key={i} 
+              className={`h-2 rounded-full transition-all duration-300 ${i === step ? 'w-8 bg-indigo-600' : 'w-2 bg-slate-200'}`} 
+            />
+          ))}
+        </div>
+      </motion.div>
+    </div>
   );
 }
 

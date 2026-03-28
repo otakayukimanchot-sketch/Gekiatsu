@@ -147,11 +147,10 @@ service cloud.firestore {
     }
 
     match /wrongQuestions/{questionId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isNewDocOwner() && isValidWrongQuestion(request.resource.data);
-      allow update: if isDocOwner() && isValidWrongQuestion(request.resource.data) &&
-                    request.resource.data.userId == resource.data.userId;
-      allow delete: if isDocOwner() || isAdmin();
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid && isValidWrongQuestion(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid && isValidWrongQuestion(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     match /suggestions/{suggestionId} {
