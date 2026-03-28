@@ -62,6 +62,7 @@ export default function App() {
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [answerHistory, setAnswerHistory] = useState<{ word: string, isCorrect: boolean }[]>([]);
 
   // Derived Battle State
   const myState = matchState?.players?.find(p => p.id === player?.id);
@@ -193,9 +194,13 @@ export default function App() {
   // --- Socket Setup ---
   useEffect(() => {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    console.log('Initializing socket connection to:', backendUrl || 'current origin');
+    
     socketRef.current = io(backendUrl, {
-      transports: ['websocket'],
-      withCredentials: true
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      reconnectionAttempts: 5,
+      timeout: 10000
     });
     
     socketRef.current.on('connect', () => {
@@ -206,6 +211,10 @@ export default function App() {
     socketRef.current.on('connect_error', (err) => {
       console.error('Connection error:', err.message);
       setIsOnline(false);
+      // Only alert if we are in a production-like environment and it's been a while
+      if (backendUrl && !window.location.hostname.includes('localhost')) {
+        console.warn(`Failed to connect to backend at: ${backendUrl}. Please ensure VITE_BACKEND_URL is correct in Vercel settings.`);
+      }
     });
 
     socketRef.current.on('disconnect', () => {
@@ -251,6 +260,7 @@ export default function App() {
       setView('battle_start');
       setCountdown(null);
       setQuizQuestions([]);
+      setAnswerHistory([]);
     } else if (state.phase === 'loading') {
       setView('battle_start');
     } else if (state.phase === 'waiting_room') {
@@ -348,6 +358,7 @@ export default function App() {
     const isCorrect = choice === currentWord.meaning;
     
     setSelectedChoice(choice);
+    setAnswerHistory(prev => [...prev, { word: currentWord.word, isCorrect }]);
     
     if (!isCorrect && player?.id && auth.currentUser) {
       // Save wrong question to Firestore (lightweight)
@@ -424,6 +435,7 @@ export default function App() {
     }));
     
     setQuizQuestions(selected);
+    setAnswerHistory([]);
     setCurrentIndex(0);
     setScore(0);
     setWrongCount(0);
@@ -480,9 +492,16 @@ export default function App() {
           <div>
             <h2 className="text-sm font-black text-slate-900 tracking-tighter uppercase leading-none">{player?.name}</h2>
             <div className="flex items-center gap-1 mt-0.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Online</p>
+              <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
+              <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                {isOnline ? 'Online' : 'Offline'}
+              </p>
             </div>
+            {!isOnline && (
+              <p className="text-[6px] text-red-400 font-bold uppercase tracking-tighter mt-0.5">
+                Server Connection Failed
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -630,6 +649,7 @@ export default function App() {
               total={quizQuestions.length} 
               timeTaken={Math.floor((endTime - startTime) / 1000)}
               opponentScore={opponentScore}
+              answerHistory={answerHistory}
               onRetry={() => {
                 if (matchState) {
                   if (matchState.roomId) {
@@ -1299,7 +1319,7 @@ function SuggestionFormView({ onSubmit, onBack }: { onSubmit: (type: string, con
       </button>
 
       <div className="bg-white rounded-[2.5rem] p-8 shadow-2xl border border-slate-100">
-        <h2 className="text-3xl font-black text-slate-900 mb-6 tracking-tighter uppercase">提案・報告・問題追加</h2>
+        <h2 className="text-3xl font-black text-slate-900 mb-6 tracking-tighter uppercase">提案・報告</h2>
         
         <div className="space-y-6">
           <div>
@@ -1317,32 +1337,15 @@ function SuggestionFormView({ onSubmit, onBack }: { onSubmit: (type: string, con
               >
                 報告
               </button>
-              <button 
-                onClick={() => { setType('problem'); setError(null); }}
-                className={`flex-1 min-w-[100px] py-3 rounded-xl font-bold transition-all ${type === 'problem' ? 'bg-emerald-600 text-white' : 'bg-slate-50 text-slate-500'}`}
-              >
-                問題追加
-              </button>
             </div>
           </div>
-
-          {type === 'problem' && (
-            <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
-              <p className="text-xs font-bold text-emerald-700 mb-2 uppercase tracking-widest">【重要】問題追加のルール</p>
-              <p className="text-[11px] text-emerald-600 leading-relaxed">
-                以下の形式で1行ずつ入力してください。区切りは必ず<span className="font-black underline">半角ドット(.)</span>を使用してください。<br/>
-                <span className="font-black">英単語.正解.不正解1.不正解2.不正解3</span><br/>
-                例: apple.りんご.みかん.ぶどう.いちご
-              </p>
-            </div>
-          )}
 
           <div>
             <label className="block text-sm font-bold text-slate-700 mb-2">内容</label>
             <textarea 
               value={content}
               onChange={(e) => { setContent(e.target.value); setError(null); }}
-              placeholder={type === 'problem' ? "apple.りんご.みかん.ぶどう.いちご" : "こちらに内容を入力してください"}
+              placeholder="こちらに内容を入力してください"
               rows={5}
               className="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all font-bold resize-none"
             />
@@ -1835,7 +1838,7 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
     </motion.div>
   );
 }
-function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, onRetry, onHome, isRematchRequested, onRematch, matchState, player }: { 
+function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, onRetry, onHome, isRematchRequested, onRematch, matchState, player, answerHistory }: { 
   mode: 'training' | 'battle', 
   score: number, 
   wrongCount: number,
@@ -1847,7 +1850,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   isRematchRequested?: boolean,
   onRematch?: () => void,
   matchState?: MatchRoomState | null,
-  player?: Player | null
+  player?: Player | null,
+  answerHistory: { word: string, isCorrect: boolean }[]
 }) {
   const isWin = mode === 'battle' ? (opponentScore !== undefined && score > opponentScore) : true;
   const isDraw = mode === 'battle' && opponentScore !== undefined && score === opponentScore;
@@ -1964,6 +1968,23 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             <Home className="w-6 h-6" /> EXIT TO HOME
           </button>
         </div>
+
+        {/* Answer History List */}
+        {answerHistory.length > 0 && (
+          <div className="mt-12 pt-12 border-t border-slate-100">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Review Questions</h3>
+            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 pokepoke-scroll">
+              {answerHistory.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span className="font-black text-slate-700 tracking-tight">{item.word}</span>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-lg ${item.isCorrect ? 'text-emerald-500 bg-emerald-50' : 'text-red-500 bg-red-50'}`}>
+                    {item.isCorrect ? '〇' : '×'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </motion.div>
   );

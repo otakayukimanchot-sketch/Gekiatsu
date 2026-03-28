@@ -1,4 +1,5 @@
 import express from "express";
+import "dotenv/config";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
@@ -14,10 +15,19 @@ async function startServer() {
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: {
-      origin: frontendUrl ? [frontendUrl, frontendUrl.replace(/\/$/, "")] : "*",
+      origin: frontendUrl ? [frontendUrl, frontendUrl.replace(/\/$/, ""), "https://gekiatsu.vercel.app"] : "*",
       methods: ["GET", "POST"],
       credentials: true
     },
+  });
+
+  // Health check routes
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", time: new Date().toISOString() });
+  });
+
+  app.get("/backend-status", (req, res) => {
+    res.send("Gekiatsu Eitango Backend is Running");
   });
 
   // Game state in memory
