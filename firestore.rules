@@ -13,6 +13,7 @@ service cloud.firestore {
     //   - displayName: string (optional)
     //   - photoURL: string (optional, url format)
     //   - createdAt: timestamp (required)
+    //   - favorites: list (optional, strings)
     //
     // Collection: quizResults
     // Document ID: auto-generated
@@ -89,9 +90,10 @@ service cloud.firestore {
     function isValidUser(data) {
       return data.uid is string && data.uid.size() > 0 &&
              data.email is string && isValidEmail(data.email) &&
-             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
-             (!('photoURL' in data) || isValidUrl(data.photoURL)) &&
-             data.createdAt is timestamp;
+             (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || data.photoURL == null || isValidUrl(data.photoURL)) &&
+             data.createdAt is timestamp &&
+             (!('favorites' in data) || (data.favorites is list && data.favorites.size() <= 100));
     }
 
     function isValidQuizResult(data) {

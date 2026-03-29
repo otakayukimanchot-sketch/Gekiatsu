@@ -7,14 +7,14 @@ import {
   CheckCircle2, XCircle, Crown, Users, 
   Play, Settings, Info, ChevronRight, ChevronLeft,
   LogOut, MessageSquare, Send, Volume2, VolumeX,
-  LogIn, QrCode, Scan, X, Copy, Check
+  LogIn, QrCode, Scan, X, Copy, Check, Star
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
+import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
 
 // --- Icons for Player ---
 const PLAYER_ICONS = [
@@ -157,12 +157,36 @@ export default function App() {
 
   // --- Auth Setup ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        // Fetch favorites from Firestore
+        let favorites: string[] = [];
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userDocRef);
+          if (userDoc.exists()) {
+            favorites = userDoc.data().favorites || [];
+          } else {
+            // Initialize user document
+            await setDoc(userDocRef, {
+              uid: user.uid,
+              email: user.email || '',
+              displayName: user.displayName || null,
+              photoURL: user.photoURL || null,
+              createdAt: serverTimestamp(),
+              favorites: []
+            });
+          }
+        } catch (error) {
+          console.error("Error fetching/initializing user data:", error);
+          handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+        }
+
         setPlayer({
           id: user.uid,
           name: user.displayName || 'Player',
-          icon: 'smile' // Default icon for Google users
+          icon: 'smile',
+          favorites
         });
         
         // Show tutorial if not seen
@@ -179,6 +203,29 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  const handleToggleFavorite = async (packId: string) => {
+    if (!player) return;
+    
+    const currentFavorites = player.favorites || [];
+    const isFavorited = currentFavorites.includes(packId);
+    const newFavorites = isFavorited
+      ? currentFavorites.filter(id => id !== packId)
+      : [...currentFavorites, packId];
+    
+    setPlayer({ ...player, favorites: newFavorites });
+    playSound('click');
+
+    // Persist to Firestore
+    try {
+      await setDoc(doc(db, 'users', player.id), {
+        favorites: newFavorites
+      }, { merge: true });
+    } catch (error) {
+      console.error("Error saving favorites:", error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${player.id}`);
+    }
+  };
 
   useEffect(() => {
     if (view !== 'training' && view !== 'battle') return;
@@ -587,6 +634,7 @@ export default function App() {
                 playSound('click');
                 setView('friend_match_setup');
               }}
+              onToggleFavorite={handleToggleFavorite}
             />
           )}
           {view === 'suggestion' && (
@@ -1171,13 +1219,17 @@ function QuizView({
   );
 }
 
-function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: { 
+function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch, onToggleFavorite }: { 
   player: Player | null, 
   onSelectPack: (pack: Pack) => void, 
   onSuggestion: () => void,
-  onFriendMatch: () => void
+  onFriendMatch: () => void,
+  onToggleFavorite: (packId: string) => void
 }) {
-  const categories = Array.from(new Set(PACKS.map(p => p.category))).sort((a, b) => {
+  const favorites = player?.favorites || [];
+  const favoritePacks = PACKS.filter(p => favorites.includes(p.id));
+
+  const baseCategories = Array.from(new Set(PACKS.map(p => p.category))).sort((a, b) => {
     const order = ['TOEIC', '英語', '英検'];
     const indexA = order.indexOf(a);
     const indexB = order.indexOf(b);
@@ -1186,6 +1238,8 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
     if (indexB !== -1) return 1;
     return a.localeCompare(b);
   });
+
+  const categories = favoritePacks.length > 0 ? ['お気に入り', ...baseCategories] : baseCategories;
   const [expandedCategories, setExpandedCategories] = useState<string[]>(categories);
 
   const toggleCategory = (category: string) => {
@@ -1205,6 +1259,10 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
       <div className="space-y-6">
         {categories.map(category => {
           const isExpanded = expandedCategories.includes(category);
+          const categoryPacks = category === 'お気に入り' 
+            ? favoritePacks 
+            : PACKS.filter(p => p.category === category);
+
           return (
             <section key={category} className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
               <button 
@@ -1212,7 +1270,7 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
                 className="w-full flex items-center justify-between p-6 hover:bg-slate-50 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <div className="h-1 w-8 bg-indigo-600 rounded-full"></div>
+                  <div className={`h-1 w-8 ${category === 'お気に入り' ? 'bg-amber-400' : 'bg-indigo-600'} rounded-full`}></div>
                   <h2 className="text-xl font-black text-slate-900 uppercase tracking-tighter">{category}</h2>
                 </div>
                 <motion.div
@@ -1232,13 +1290,20 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
                     transition={{ duration: 0.3, ease: "easeInOut" }}
                   >
                     <div className="flex overflow-x-auto gap-6 pb-8 px-6 pokepoke-scroll snap-x">
-                      {PACKS.filter(p => p.category === category).map((pack) => (
-                        <motion.button
+                      {categoryPacks.map((pack) => (
+                        <motion.div
                           key={pack.id}
                           whileHover={{ y: -10 }}
                           whileTap={{ scale: 0.95 }}
                           onClick={() => onSelectPack(pack)}
-                          className="relative flex-shrink-0 w-72 rounded-[2.5rem] aspect-[3/4.5] group card-pack-shadow overflow-hidden snap-center"
+                          className="relative flex-shrink-0 w-72 rounded-[2.5rem] aspect-[3/4.5] group card-pack-shadow overflow-hidden snap-center cursor-pointer"
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              onSelectPack(pack);
+                            }
+                          }}
                         >
                           <div className={`absolute inset-0 ${pack.color}`}>
                              <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle, white 2px, transparent 2px)', backgroundSize: '20px 20px' }}></div>
@@ -1251,11 +1316,6 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
                             </span>
                           </div>
                           
-                          <div className="absolute top-6 left-6 right-6 flex justify-between items-start">
-                             <div className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-[10px] font-black text-white uppercase tracking-widest">Official</div>
-                             <Info className="w-5 h-5 text-white/50" />
-                          </div>
-
                           <div className="absolute inset-0 p-8 flex flex-col justify-end text-white text-left">
                             <h3 className="text-2xl font-black leading-tight tracking-tighter uppercase whitespace-pre-wrap mb-2">
                               {pack.name}
@@ -1264,8 +1324,22 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch }: {
                               {pack.description}
                             </p>
                           </div>
+
+                          <div className="absolute top-6 left-6 right-6 flex justify-between items-start z-10">
+                             <div className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-[10px] font-black text-white uppercase tracking-widest">Official</div>
+                             <button 
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 onToggleFavorite(pack.id);
+                               }}
+                               className="p-2 -m-2 hover:bg-white/10 rounded-full transition-colors pointer-events-auto"
+                             >
+                               <Star className={`w-6 h-6 ${favorites.includes(pack.id) ? 'text-amber-400 fill-amber-400' : 'text-white/50'}`} />
+                             </button>
+                          </div>
+
                           <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
-                        </motion.button>
+                        </motion.div>
                       ))}
                     </div>
                   </motion.div>
