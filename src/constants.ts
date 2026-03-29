@@ -17,8 +17,18 @@ import { ENGLISH_TRIVIA_WORDS } from './data/englishTrivia.ts';
 import { ATTACK25_WORDS } from './data/attack25.ts';
 import { CONFUSING_C_WORDS } from './data/confusingC.ts';
 import { CONFUSING_IDIOMS_WORDS } from './data/confusingIdioms.ts';
+import { TOEIC_GOLD_WORDS } from './data/toeicGold.ts';
+import { TOEIC_OVERLORD_WORDS } from './data/toeicOverlord.ts';
 
 export const PACKS: Pack[] = [
+  {
+    id: 'toeic-gold',
+    name: 'TOEIC金のやつ',
+    description: 'TOEIC頻出の「金のフレーズ」レベルの重要単語をマスター。',
+    category: 'TOEIC',
+    color: 'bg-gradient-to-br from-yellow-400 to-amber-600',
+    words: TOEIC_GOLD_WORDS,
+  },
   {
     id: 'todai-king',
     name: '東大王',
@@ -162,5 +172,13 @@ export const PACKS: Pack[] = [
     category: '英語',
     color: 'bg-gradient-to-br from-teal-500 to-emerald-600',
     words: CONFUSING_IDIOMS_WORDS,
+  },
+  {
+    id: 'toeic-overlord',
+    name: 'TOEIC覇王',
+    description: 'TOEIC 990点超え、真の英語力を手に入れるための究極単語集。',
+    category: 'TOEIC',
+    color: 'bg-gradient-to-br from-slate-800 to-black',
+    words: TOEIC_OVERLORD_WORDS,
   },
 ];
