@@ -15,7 +15,17 @@ async function startServer() {
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: {
-      origin: frontendUrl ? [frontendUrl, frontendUrl.replace(/\/$/, ""), "https://gekiatsu.vercel.app"] : "*",
+      origin: (origin, callback) => {
+        // Allow all origins in development or if they match the AI Studio pattern
+        if (!origin || origin.includes('.run.app') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+          callback(null, true);
+        } else if (frontendUrl && (origin === frontendUrl || origin === frontendUrl.replace(/\/$/, ""))) {
+          callback(null, true);
+        } else {
+          console.warn(`Blocked by CORS: ${origin}`);
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
       methods: ["GET", "POST"],
       credentials: true
     },
@@ -145,8 +155,8 @@ async function startServer() {
   };
 
   io.on("connection", (socket) => {
-    console.log("a user connected", socket.id);
-
+    console.log(`Client connected: ${socket.id} from ${socket.handshake.headers.origin}`);
+    
     socket.on("join_match", ({ packId, questionCount, player }) => {
       const poolKey = `pool_${packId}_${questionCount}`;
       const waitingSocketId = matchingPool.get(poolKey);

@@ -50,8 +50,11 @@ export default function App() {
   const [questionCount, setQuestionCount] = useState<number>(50);
   const [matchState, setMatchState] = useState<MatchRoomState | null>(null);
   const [isOnline, setIsOnline] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [listeningCountdown, setListeningCountdown] = useState<number | null>(null);
+  const [audioPlayed, setAudioPlayed] = useState(false);
   
   // Quiz State
   const [quizQuestions, setQuizQuestions] = useState<Word[]>([]);
@@ -79,6 +82,22 @@ export default function App() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const bgmRef = useRef<HTMLAudioElement | null>(null);
   const mainRef = useRef<HTMLElement>(null);
+
+  const playAudio = (text: string) => {
+    if (isMuted) return;
+    // Cancel any ongoing speech before starting new one
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.9; // Slightly slower for clarity
+    window.speechSynthesis.speak(utterance);
+    setAudioPlayed(true);
+  };
+
+  // --- Stop Audio on view or question change ---
+  useEffect(() => {
+    window.speechSynthesis.cancel();
+  }, [view, currentIndex]);
 
   // --- Scroll to top on view change ---
   useEffect(() => {
@@ -132,6 +151,7 @@ export default function App() {
     }
 
     const isQuizView = ['training', 'battle', 'battle_start'].includes(view);
+    const isListeningQuiz = isQuizView && selectedPack?.type === 'listening';
     const targetUrl = isQuizView ? quizBgmUrl : menuBgmUrl;
     
     // Update source if it's different
@@ -144,16 +164,16 @@ export default function App() {
     }
 
     // Play/Pause logic
-    if (hasInteracted && !isMuted && !showSplash) {
+    if (hasInteracted && !isMuted && !showSplash && !isListeningQuiz) {
       console.log('Attempting to play BGM:', targetUrl);
       bgmRef.current.play().catch((err) => {
         console.warn("BGM play failed:", err);
       });
     } else {
-      console.log('Pausing BGM. hasInteracted:', hasInteracted, 'isMuted:', isMuted, 'showSplash:', showSplash);
+      console.log('Pausing BGM. hasInteracted:', hasInteracted, 'isMuted:', isMuted, 'showSplash:', showSplash, 'isListeningQuiz:', isListeningQuiz);
       bgmRef.current.pause();
     }
-  }, [isMuted, view, hasInteracted, showSplash]);
+  }, [isMuted, view, hasInteracted, showSplash, selectedPack]);
 
   // --- Auth Setup ---
   useEffect(() => {
@@ -230,6 +250,7 @@ export default function App() {
   useEffect(() => {
     if (view !== 'training' && view !== 'battle') return;
     if (answerStatus !== 'idle') return;
+    if (selectedPack?.type === 'listening' && listeningCountdown !== null) return;
 
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
@@ -245,14 +266,41 @@ export default function App() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [view, currentIndex, answerStatus]);
+  }, [view, currentIndex, answerStatus, selectedPack, listeningCountdown]);
+
+  // Listening Countdown Effect
+  useEffect(() => {
+    if (view !== 'training' && view !== 'battle') return;
+    if (selectedPack?.type !== 'listening') return;
+    if (listeningCountdown === null) return;
+
+    const interval = setInterval(() => {
+      setListeningCountdown(prev => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          clearInterval(interval);
+          playAudio(quizQuestions[currentIndex].word);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [view, selectedPack, listeningCountdown, currentIndex, quizQuestions]);
 
   // --- Socket Setup ---
   useEffect(() => {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
-    console.log('Initializing socket connection to:', backendUrl || 'current origin');
     
-    socketRef.current = io(backendUrl, {
+    // In AI Studio environment, we should default to the current origin for the backend
+    // especially if VITE_BACKEND_URL is pointing to an external placeholder.
+    const socketUrl = (backendUrl.includes('onrender.com') || backendUrl.includes('vercel.app')) 
+      ? '' 
+      : backendUrl;
+
+    console.log('Initializing socket connection to:', socketUrl || 'current origin');
+    
+    socketRef.current = io(socketUrl, {
       transports: ['websocket', 'polling'],
       withCredentials: true,
       reconnectionAttempts: 5,
@@ -260,22 +308,38 @@ export default function App() {
     });
     
     socketRef.current.on('connect', () => {
-      console.log('Connected to server:', backendUrl || 'local');
+      console.log('Connected to server:', socketUrl || 'current origin');
       setIsOnline(true);
+      setConnectionError(null);
     });
     
     socketRef.current.on('connect_error', (err) => {
-      console.error('Connection error:', err.message);
+      console.error('Socket connection error:', err.message, err);
       setIsOnline(false);
-      // Only alert if we are in a production-like environment and it's been a while
+      setConnectionError(`Connection failed: ${err.message}. Please check if the server is running and accessible.`);
+      
       if (backendUrl && !window.location.hostname.includes('localhost')) {
         console.warn(`Failed to connect to backend at: ${backendUrl}. Please ensure VITE_BACKEND_URL is correct in Vercel settings.`);
       }
     });
 
-    socketRef.current.on('disconnect', () => {
-      console.log('Disconnected from server');
+    socketRef.current.on('reconnect_attempt', (attempt) => {
+      console.log(`Socket reconnection attempt #${attempt}`);
+      setConnectionError(`Reconnecting... (Attempt ${attempt})`);
+    });
+
+    socketRef.current.on('reconnect_failed', () => {
+      console.error('Socket reconnection failed');
+      setConnectionError('Connection lost. Please refresh the page.');
+    });
+
+    socketRef.current.on('disconnect', (reason) => {
+      console.log('Disconnected from server:', reason);
       setIsOnline(false);
+      if (reason === 'io server disconnect') {
+        // the disconnection was initiated by the server, you need to reconnect manually
+        socketRef.current?.connect();
+      }
     });
 
     socketRef.current.on('state_update', (state: MatchRoomState) => {
@@ -418,6 +482,12 @@ export default function App() {
       setTimeLeft(10);
       setAnswerStatus('idle');
       setSelectedChoice(null);
+      setAudioPlayed(false);
+      if (selectedPack?.type === 'listening') {
+        setListeningCountdown(3);
+      } else {
+        setListeningCountdown(null);
+      }
     } else {
       setView('result');
       if (score > (quizQuestions.length / 2)) confetti();
@@ -506,6 +576,12 @@ export default function App() {
     setTimeLeft(10);
     setAnswerStatus('idle');
     setSelectedChoice(null);
+    setAudioPlayed(false);
+    if (selectedPack?.type === 'listening') {
+      setListeningCountdown(3);
+    } else {
+      setListeningCountdown(null);
+    }
     setIsLoading(false);
   };
 
@@ -719,6 +795,8 @@ export default function App() {
               score={myScore}
               opponentScore={opponentScore}
               matchState={matchState}
+              listeningCountdown={listeningCountdown}
+              selectedPack={selectedPack}
             />
           )}
           {view === 'result' && (
@@ -917,14 +995,16 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
 function QuizView({ 
   mode, isLoading, currentIndex, total, question, timeLeft, 
   answerStatus, selectedChoice, onAnswer, opponent, opponentAnswer,
-  player, score, opponentScore, matchState
+  player, score, opponentScore, matchState, listeningCountdown, selectedPack
 }: { 
   mode: 'training' | 'battle', isLoading: boolean, currentIndex: number, total: number, 
   question: Word, timeLeft: number, answerStatus: string, 
   selectedChoice: string | null, onAnswer: (choice: string | null) => void,
   opponent?: Player, opponentAnswer?: any,
   player?: Player | null, score: number, opponentScore: number,
-  matchState?: MatchRoomState | null
+  matchState?: MatchRoomState | null,
+  listeningCountdown: number | null,
+  selectedPack: Pack | null
 }) {
   if (isLoading) {
     return (
@@ -944,6 +1024,10 @@ function QuizView({
   const isAnswerLocked = matchState?.phase === 'answering';
   const myState = matchState?.players?.find(p => p.id === player?.id);
   const isMyTurn = mode === 'training' || (matchState?.phase === 'question' && !myState?.answered);
+
+  const isListening = selectedPack?.type === 'listening';
+  const showCountdown = isListening && listeningCountdown !== null;
+  const hideQuestion = isListening && answerStatus === 'idle';
 
   const getFontSize = (text: string) => {
     const len = text.length;
@@ -1076,10 +1160,34 @@ function QuizView({
       >
         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
         <div className="w-full">
-          <h3 className={`${getFontSize(question.word)} font-black text-slate-900 mb-4 tracking-tight break-words`}>
-            {question.word}
-          </h3>
-          <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">Select the correct meaning</p>
+          {showCountdown ? (
+            <motion.div 
+              key={listeningCountdown}
+              initial={{ scale: 2, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="text-7xl font-black text-indigo-600 italic"
+            >
+              {listeningCountdown}
+            </motion.div>
+          ) : hideQuestion ? (
+            <div className="flex flex-col items-center gap-4">
+              <motion.div
+                animate={{ scale: [1, 1.1, 1] }}
+                transition={{ repeat: Infinity, duration: 1.5 }}
+                className="w-20 h-20 rounded-full bg-indigo-50 flex items-center justify-center border-4 border-indigo-100"
+              >
+                <Volume2 className="w-10 h-10 text-indigo-600" />
+              </motion.div>
+              <p className="text-2xl font-black text-indigo-600 uppercase tracking-widest italic animate-pulse">Listen!</p>
+            </div>
+          ) : (
+            <>
+              <h3 className={`${getFontSize(question.word)} font-black text-slate-900 mb-4 tracking-tight break-words`}>
+                {question.word}
+              </h3>
+              <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">Select the correct meaning</p>
+            </>
+          )}
         </div>
 
         {/* Feedback Overlay - Full Screen */}
@@ -1123,6 +1231,12 @@ function QuizView({
                       ))}
                     </div>
                     <p className="mt-4 text-xl font-bold text-slate-500 bg-slate-100 px-6 py-2 rounded-full inline-block">Answer: {question.meaning}</p>
+                    {isListening && question.explanation && (
+                      <div className="mt-4 p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                        <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
+                        <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                      </div>
+                    )}
                   </div>
                 ) : matchState?.phase === 'answering' ? (
                   <div className="flex flex-col items-center">
@@ -1144,6 +1258,20 @@ function QuizView({
                     <p className="text-6xl font-black text-emerald-600 tracking-tighter drop-shadow-sm">
                       CORRECT!
                     </p>
+                    {isListening && (
+                      <div className="w-full max-w-md mt-8 space-y-4">
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Script</p>
+                          <p className="text-lg font-black text-slate-900 leading-tight">{question.word}</p>
+                        </div>
+                        {question.explanation && (
+                          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
+                            <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 ) : answerStatus === 'opponent_won' ? (
                   <>
@@ -1152,6 +1280,20 @@ function QuizView({
                     </div>
                     <p className="text-3xl font-black text-red-600 tracking-tighter uppercase">{opponent?.name} GOT IT!</p>
                     <p className="mt-4 text-xl font-bold text-slate-500 bg-slate-100 px-6 py-2 rounded-full">Answer: {question.meaning}</p>
+                    {isListening && (
+                      <div className="w-full max-w-md mt-6 space-y-4">
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Script</p>
+                          <p className="text-lg font-black text-slate-900 leading-tight">{question.word}</p>
+                        </div>
+                        {question.explanation && (
+                          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
+                            <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>
@@ -1164,6 +1306,20 @@ function QuizView({
                     </motion.div>
                     <p className="text-6xl font-black text-red-600 tracking-tighter drop-shadow-sm">MISS!</p>
                     <p className="mt-4 text-xl font-bold text-slate-500 bg-slate-100 px-6 py-2 rounded-full">Correct: {question.meaning}</p>
+                    {isListening && (
+                      <div className="w-full max-w-md mt-6 space-y-4">
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Script</p>
+                          <p className="text-lg font-black text-slate-900 leading-tight">{question.word}</p>
+                        </div>
+                        {question.explanation && (
+                          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
+                            <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </motion.div>
@@ -2181,12 +2337,19 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
 function SetupView({ onComplete, isMuted, onToggleMute }: { onComplete: (name: string, iconId: string) => void, isMuted: boolean, onToggleMute: () => void }) {
   const [name, setName] = useState('');
   const [selectedIcon, setSelectedIcon] = useState('smile');
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const handleGoogleLogin = async () => {
     try {
+      setAuthError(null);
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Login error:', error);
+    } catch (error: any) {
+      console.error('Google login error:', error);
+      if (error.code === 'auth/popup-closed-by-user') {
+        setAuthError('ログイン画面が閉じられました。もう一度お試しください。');
+      } else {
+        setAuthError(error.message);
+      }
     }
   };
 
@@ -2221,12 +2384,21 @@ function SetupView({ onComplete, isMuted, onToggleMute }: { onComplete: (name: s
           <p className="text-slate-500 font-bold">ログインして始めよう！</p>
         </div>
         
-        <div className="space-y-6">
+        <div className="space-y-4">
+          {authError && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-xs font-bold"
+            >
+              {authError}
+            </motion.div>
+          )}
           <button
             onClick={handleGoogleLogin}
-            className="w-full py-4 bg-white border-2 border-slate-100 rounded-2xl font-black text-lg flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
+            className="w-full py-3 bg-white border-2 border-slate-100 rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
           >
-            <LogIn className="w-6 h-6 text-indigo-600" />
+            <LogIn className="w-5 h-5 text-indigo-600" />
             Googleでログイン
           </button>
 

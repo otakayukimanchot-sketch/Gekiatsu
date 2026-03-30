@@ -19,8 +19,18 @@ import { CONFUSING_C_WORDS } from './data/confusingC.ts';
 import { CONFUSING_IDIOMS_WORDS } from './data/confusingIdioms.ts';
 import { TOEIC_GOLD_WORDS } from './data/toeicGold.ts';
 import { TOEIC_OVERLORD_WORDS } from './data/toeicOverlord.ts';
+import { TOEIC_LISTENING_WORDS } from './data/listening.ts';
 
 export const PACKS: Pack[] = [
+  {
+    id: 'toeic-listening',
+    name: 'TOEICリスニング特訓',
+    description: '音声を聞いて瞬時に理解する。先読みと瞬時理解を鍛える。',
+    category: 'TOEIC',
+    color: 'bg-gradient-to-br from-red-500 to-rose-700',
+    words: TOEIC_LISTENING_WORDS,
+    type: 'listening',
+  },
   {
     id: 'toeic-gold',
     name: 'TOEIC金のやつ',

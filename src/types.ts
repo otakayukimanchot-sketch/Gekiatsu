@@ -2,6 +2,7 @@ export interface Word {
   word: string;
   meaning: string;
   choices: string[];
+  explanation?: string;
 }
 
 export interface Pack {
@@ -11,6 +12,7 @@ export interface Pack {
   category: string;
   color: string;
   words: Word[];
+  type?: 'vocabulary' | 'listening';
 }
 
 export interface Player {

@@ -491,7 +491,6 @@ export const TOEIC_OVERLORD_WORDS: Word[] = [
 { word: "curious", meaning: "知りたがる", choices: ["知りたがる", "好奇心旺盛な", "好奇心旺盛", "好奇心"] },
 { word: "impractical", meaning: "非現実的な", choices: ["非現実的な", "非現実的", "非現実", "非現実"] },
 { word: "bias", meaning: "偏見 / 先入観", choices: ["偏見 / 先入観", "偏見", "先入観", "偏見"] },
-{ word: "favorable", meaning: "好都合な / 期
 { word: "favorable", meaning: "好都合な / 期待できる", choices: ["好都合な / 期待できる", "好都合な", "期待できる", "好条件"] },
 { word: "portfolio", meaning: "作品集", choices: ["作品集", "ポートフォリオ", "作品集", "ポートフォリオ"] },
 { word: "curb", meaning: "～を抑える", choices: ["～を抑える", "抑える", "制止する", "制止"] },
@@ -964,4 +963,4 @@ export const TOEIC_OVERLORD_WORDS: Word[] = [
 { word: "document", meaning: "～を記録する / 実証する", choices: ["～を記録する / 実証する", "記録する", "実証する", "ドキュメント"] },
 { word: "episode", meaning: "出来事", choices: ["出来事", "エピソード", "出来事", "エピソード"] },
 { word: "critique", meaning: "批評", choices: ["批評", "クリティーク", "批評", "批評"] }
-];,
+];
