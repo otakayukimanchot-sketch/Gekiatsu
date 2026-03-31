@@ -7,7 +7,7 @@ import {
   CheckCircle2, XCircle, Crown, Users, 
   Play, Settings, Info, ChevronRight, ChevronLeft,
   LogOut, MessageSquare, Send, Volume2, VolumeX,
-  LogIn, QrCode, Scan, X, Copy, Check, Star
+  LogIn, QrCode, Scan, X, Copy, Check, Star, Share2
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
@@ -2164,6 +2164,45 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
 
   const opponent = matchState?.players?.find(p => p.id !== player?.id);
+  const [isCopied, setIsCopied] = useState(false);
+
+  const handleShare = async () => {
+    const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word}`);
+    const lostWords = answerHistory.filter(item => item.status === 'lost').map(item => `・${item.word}`);
+
+    let shareText = `【激アツ英単語 - 復習リスト】\nアプリで英単語を特訓中！🔥\nhttps://ais-pre-rr2ttfs754ir6fyylr5a4z-247786600891.asia-northeast1.run.app\n\n`;
+
+    if (wrongWords.length > 0) {
+      shareText += `■ 間違えた問題 (×)\n${wrongWords.join('\n')}\n\n`;
+    }
+
+    if (lostWords.length > 0) {
+      shareText += `■ 押し負けた問題 (△)\n${lostWords.join('\n')}\n\n`;
+    }
+
+    if (wrongWords.length === 0 && lostWords.length === 0) {
+      shareText += `全問正解！完璧です！✨\n`;
+    }
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: '激アツ英単語 復習リスト',
+          text: shareText,
+        });
+      } catch (err) {
+        console.error('Share failed:', err);
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(shareText);
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
+      } catch (err) {
+        console.error('Clipboard failed:', err);
+      }
+    }
+  };
 
   return (
     <motion.div 
@@ -2272,6 +2311,18 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             className="w-full py-5 bg-white text-slate-600 rounded-2xl font-black text-xl border-2 border-slate-100 hover:bg-slate-50 transition-all active:scale-95 flex items-center justify-center gap-2"
           >
             <Home className="w-6 h-6" /> EXIT TO HOME
+          </button>
+          
+          <button
+            onClick={() => { playSound('click'); handleShare(); }}
+            className={`w-full py-5 rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center gap-2 border-2 ${
+              isCopied 
+              ? 'bg-emerald-50 border-emerald-500 text-emerald-600' 
+              : 'bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100'
+            }`}
+          >
+            {isCopied ? <Check className="w-6 h-6" /> : <Share2 className="w-6 h-6" />}
+            {isCopied ? 'COPIED TO CLIPBOARD!' : 'SHARE WRONG QUESTIONS'}
           </button>
         </div>
 
