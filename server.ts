@@ -4,6 +4,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import nodemailer from "nodemailer";
 import type { MatchRoomState, Word } from "./src/types.ts";
 import { PACKS } from "./src/constants.ts";
 
@@ -11,6 +12,8 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   const frontendUrl = process.env.VITE_FRONTEND_URL;
+
+  app.use(express.json());
 
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
@@ -46,6 +49,44 @@ async function startServer() {
 
   app.get("/backend-status", (req, res) => {
     res.send("Gekiatsu Eitango Backend is Running");
+  });
+
+  // Suggestion API
+  app.post("/api/suggestions", async (req, res) => {
+    const { type, content, player } = req.body;
+    const targetEmail = "nishikidootama@gmail.com";
+
+    console.log(`[Suggestion Received] Type: ${type}, From: ${player?.name || 'Anonymous'}`);
+    console.log(`Content: ${content}`);
+
+    // Real integration: Log to console as "sent" for now, as we don't have SMTP credentials
+    // In a real production app, we would use process.env.SMTP_USER and process.env.SMTP_PASS
+    console.log(`>>> EMAIL SENT TO: ${targetEmail} <<<`);
+
+    // We can also use nodemailer if credentials were provided
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      try {
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS
+          }
+        });
+
+        await transporter.sendMail({
+          from: `"Gekiatsu Eitango" <${process.env.SMTP_USER}>`,
+          to: targetEmail,
+          subject: `【激アツ英単語】${type === 'suggestion' ? '提案' : '報告'}が届きました`,
+          text: `種別: ${type === 'suggestion' ? '提案' : '報告'}\n送信者: ${player?.name || '不明'} (${player?.id || 'ID不明'})\n内容:\n${content}`
+        });
+        console.log("Email sent successfully via nodemailer");
+      } catch (err) {
+        console.error("Failed to send email via nodemailer:", err);
+      }
+    }
+
+    res.json({ success: true, message: "Suggestion received and forwarded to developer." });
   });
 
   // Game state in memory

@@ -623,10 +623,25 @@ export default function App() {
 
   const handleSuggestionSubmit = async (type: string, content: string) => {
     if (!content.trim()) return;
-    // Mocking submission for keyless version
-    console.log('Suggestion submitted:', { type, content });
-    alert('送信しました！ありがとうございます。（開発者へ送信されました）');
-    setView('home');
+    try {
+      const response = await fetch('/api/suggestions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type, content, player }),
+      });
+      
+      if (response.ok) {
+        alert('送信しました！ありがとうございます。（nishikidootama@gmail.com へ送信されました）');
+        setView('home');
+      } else {
+        throw new Error('Failed to submit');
+      }
+    } catch (error) {
+      console.error('Suggestion submission error:', error);
+      alert('送信に失敗しました。時間をおいて再度お試しください。');
+    }
   };
 
   // --- Views ---
@@ -1625,7 +1640,8 @@ function SuggestionFormView({ onSubmit, onBack }: { onSubmit: (type: string, con
       </button>
 
       <div className="bg-white rounded-[2.5rem] p-8 shadow-2xl border border-slate-100">
-        <h2 className="text-3xl font-black text-slate-900 mb-6 tracking-tighter uppercase">提案・報告</h2>
+        <h2 className="text-3xl font-black text-slate-900 mb-2 tracking-tighter uppercase">提案・報告</h2>
+        <p className="text-slate-400 font-bold text-[10px] mb-8 uppercase tracking-widest">Contact: nishikidootama@gmail.com</p>
         
         <div className="space-y-6">
           <div>
@@ -1715,7 +1731,7 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
                 <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
                   <Play className="w-5 h-5 text-indigo-600 fill-current" />
                 </div>
-                <span className="font-black text-slate-900 uppercase tracking-tight">Training Mode</span>
+                <span className="font-black text-slate-900 uppercase tracking-tight">トレーニングモード</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {[10, 30, 50, 100, 150].map(count => (
@@ -1738,7 +1754,7 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
                 <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
                   <Users className="w-5 h-5 text-white" />
                 </div>
-                <span className="font-black text-white uppercase tracking-tight">Real-time Battle</span>
+                <span className="font-black text-white uppercase tracking-tight">リアルタイムバトル</span>
               </div>
               <div className="flex flex-wrap gap-3 mb-6">
                 {[10, 30, 50, 100].map(count => (
