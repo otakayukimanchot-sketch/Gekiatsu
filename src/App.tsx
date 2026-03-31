@@ -290,21 +290,23 @@ export default function App() {
 
   // --- Socket Setup ---
   useEffect(() => {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
-    
     // In AI Studio environment, we should default to the current origin for the backend
     // especially if VITE_BACKEND_URL is pointing to an external placeholder.
-    const socketUrl = (backendUrl.includes('onrender.com') || backendUrl.includes('vercel.app')) 
-      ? '' 
+    const isAiStudio = window.location.hostname.includes('.run.app');
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    
+    const socketUrl = (isAiStudio || backendUrl.includes('onrender.com') || backendUrl.includes('vercel.app')) 
+      ? window.location.origin 
       : backendUrl;
 
-    console.log('Initializing socket connection to:', socketUrl || 'current origin');
+    console.log('Initializing socket connection to:', socketUrl);
     
     socketRef.current = io(socketUrl, {
       transports: ['websocket', 'polling'],
       withCredentials: true,
-      reconnectionAttempts: 5,
-      timeout: 10000
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      timeout: 20000
     });
     
     socketRef.current.on('connect', () => {
