@@ -68,7 +68,10 @@ export default function App() {
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [answerHistory, setAnswerHistory] = useState<{ word: string, status: 'correct' | 'wrong' | 'lost' }[]>([]);
+  const [isAutoSpeechEnabled, setIsAutoSpeechEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('pokepoke_auto_speech') !== 'false'; // Default to true
+  });
+  const [answerHistory, setAnswerHistory] = useState<{ word: string, meaning: string, status: 'correct' | 'wrong' | 'lost' }[]>([]);
 
   // Derived Battle State
   const myState = matchState?.players?.find(p => p.id === player?.id);
@@ -410,7 +413,7 @@ export default function App() {
       if (state.questionIndex !== currentIndex) {
         // Record previous question as wrong if not already recorded
         if (quizQuestions[currentIndex] && answerHistory.length <= currentIndex) {
-          setAnswerHistory(prev => [...prev, { word: quizQuestions[currentIndex].word, status: 'wrong' }]);
+          setAnswerHistory(prev => [...prev, { word: quizQuestions[currentIndex].word, meaning: quizQuestions[currentIndex].meaning, status: 'wrong' }]);
         }
         setCurrentIndex(state.questionIndex);
         setAnswerStatus('idle');
@@ -426,7 +429,7 @@ export default function App() {
           playSound('wrong');
           const currentWord = quizQuestions[state.questionIndex];
           if (currentWord && answerHistory.length <= state.questionIndex) {
-            setAnswerHistory(prev => [...prev, { word: currentWord.word, status: 'lost' }]);
+            setAnswerHistory(prev => [...prev, { word: currentWord.word, meaning: currentWord.meaning, status: 'lost' }]);
           }
         }
       }
@@ -516,7 +519,7 @@ export default function App() {
     
     setSelectedChoice(choice);
     if (answerHistory.length <= currentIndex) {
-      setAnswerHistory(prev => [...prev, { word: currentWord.word, status: isCorrect ? 'correct' : 'wrong' }]);
+      setAnswerHistory(prev => [...prev, { word: currentWord.word, meaning: currentWord.meaning, status: isCorrect ? 'correct' : 'wrong' }]);
     }
     
     if (view === 'battle') {
@@ -856,6 +859,14 @@ export default function App() {
               matchState={matchState}
               listeningCountdown={listeningCountdown}
               selectedPack={selectedPack}
+              isAutoSpeechEnabled={isAutoSpeechEnabled}
+              onToggleAutoSpeech={() => {
+                const newValue = !isAutoSpeechEnabled;
+                setIsAutoSpeechEnabled(newValue);
+                localStorage.setItem('pokepoke_auto_speech', String(newValue));
+                playSound('click');
+              }}
+              playAudio={playAudio}
             />
           )}
           {view === 'result' && (
@@ -1054,7 +1065,8 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
 function QuizView({ 
   mode, isLoading, currentIndex, total, question, timeLeft, 
   answerStatus, selectedChoice, onAnswer, opponent, opponentAnswer,
-  player, score, opponentScore, matchState, listeningCountdown, selectedPack
+  player, score, opponentScore, matchState, listeningCountdown, selectedPack,
+  isAutoSpeechEnabled, onToggleAutoSpeech, playAudio
 }: { 
   mode: 'training' | 'battle', isLoading: boolean, currentIndex: number, total: number, 
   question: Word, timeLeft: number, answerStatus: string, 
@@ -1063,8 +1075,23 @@ function QuizView({
   player?: Player | null, score: number, opponentScore: number,
   matchState?: MatchRoomState | null,
   listeningCountdown: number | null,
-  selectedPack: Pack | null
+  selectedPack: Pack | null,
+  isAutoSpeechEnabled: boolean,
+  onToggleAutoSpeech: () => void,
+  playAudio: (text: string) => void
 }) {
+  // --- Auto Speech Logic ---
+  useEffect(() => {
+    if (isLoading || !question || !isAutoSpeechEnabled || answerStatus !== 'idle') return;
+    
+    // Only play if it's a single word (no spaces)
+    const isSingleWord = !question.word.trim().includes(' ');
+    const isListening = selectedPack?.type === 'listening';
+    
+    if (isSingleWord && !isListening) {
+      playAudio(question.word);
+    }
+  }, [currentIndex, isAutoSpeechEnabled, isLoading, question, selectedPack, answerStatus]);
   if (isLoading) {
     return (
       <div className="min-h-[80vh] flex flex-col items-center justify-center">
@@ -1137,9 +1164,24 @@ function QuizView({
               {mode === 'battle' ? 'Battle' : 'Training'}
             </span>
           </div>
-          <p className="text-2xl font-black text-slate-900 tracking-tighter">
-            {currentIndex + 1} <span className="text-slate-300 mx-1">/</span> {total}
-          </p>
+          <div className="flex items-center gap-3 justify-end">
+            <button 
+              onClick={onToggleAutoSpeech}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 transition-all ${
+                isAutoSpeechEnabled 
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-600' 
+                  : 'bg-slate-50 border-slate-200 text-slate-400'
+              }`}
+            >
+              {isAutoSpeechEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              <span className="text-[10px] font-black uppercase tracking-tighter">
+                音声{isAutoSpeechEnabled ? 'オン' : 'オフ'}
+              </span>
+            </button>
+            <p className="text-2xl font-black text-slate-900 tracking-tighter">
+              {currentIndex + 1} <span className="text-slate-300 mx-1">/</span> {total}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -2173,7 +2215,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   onRematch?: () => void,
   matchState?: MatchRoomState | null,
   player?: Player | null,
-  answerHistory: { word: string, status: 'correct' | 'wrong' | 'lost' }[]
+  answerHistory: { word: string, meaning: string, status: 'correct' | 'wrong' | 'lost' }[]
 }) {
   const isWin = mode === 'battle' ? (opponentScore !== undefined && score > opponentScore) : true;
   const isDraw = mode === 'battle' && opponentScore !== undefined && score === opponentScore;
@@ -2183,8 +2225,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   const [isCopied, setIsCopied] = useState(false);
 
   const handleShare = async () => {
-    const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word}`);
-    const lostWords = answerHistory.filter(item => item.status === 'lost').map(item => `・${item.word}`);
+    const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word} (${item.meaning})`);
+    const lostWords = answerHistory.filter(item => item.status === 'lost').map(item => `・${item.word} (${item.meaning})`);
 
     let shareText = `【激アツ英単語 - 復習リスト】\nアプリで英単語を特訓中！🔥\nhttps://ais-pre-rr2ttfs754ir6fyylr5a4z-247786600891.asia-northeast1.run.app\n\n`;
 
@@ -2349,8 +2391,11 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             <div className="space-y-3 pr-2">
               {answerHistory.map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="font-black text-slate-700 tracking-tight">{item.word}</span>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-lg ${
+                  <div className="flex flex-col items-start text-left">
+                    <span className="font-black text-slate-700 tracking-tight">{item.word}</span>
+                    <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest leading-none mt-1">{item.meaning}</span>
+                  </div>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-lg flex-shrink-0 ${
                     item.status === 'correct' ? 'text-emerald-500 bg-emerald-50' : 
                     item.status === 'lost' ? 'text-orange-500 bg-orange-50' : 
                     'text-red-500 bg-red-50'
