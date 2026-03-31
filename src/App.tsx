@@ -83,6 +83,14 @@ export default function App() {
   const bgmRef = useRef<HTMLAudioElement | null>(null);
   const mainRef = useRef<HTMLElement>(null);
 
+  const reconnectSocket = () => {
+    if (socketRef.current) {
+      console.log('Manually reconnecting socket...');
+      socketRef.current.disconnect();
+      socketRef.current.connect();
+    }
+  };
+
   const playAudio = (text: string) => {
     if (isMuted) return;
     // Cancel any ongoing speech before starting new one
@@ -291,22 +299,24 @@ export default function App() {
   // --- Socket Setup ---
   useEffect(() => {
     // In AI Studio environment, we should default to the current origin for the backend
-    // especially if VITE_BACKEND_URL is pointing to an external placeholder.
     const isAiStudio = window.location.hostname.includes('.run.app');
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
     
-    const socketUrl = (isAiStudio || backendUrl.includes('onrender.com') || backendUrl.includes('vercel.app')) 
-      ? window.location.origin 
-      : backendUrl;
+    // Determine the most stable socket URL
+    let socketUrl = window.location.origin;
+    if (!isAiStudio && backendUrl && !backendUrl.includes('onrender.com') && !backendUrl.includes('vercel.app')) {
+      socketUrl = backendUrl;
+    }
 
     console.log('Initializing socket connection to:', socketUrl);
     
     socketRef.current = io(socketUrl, {
       transports: ['websocket', 'polling'],
       withCredentials: true,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: 15, // Increased for more stability
       reconnectionDelay: 1000,
-      timeout: 20000
+      reconnectionDelayMax: 5000,
+      timeout: 30000 // Increased timeout
     });
     
     socketRef.current.on('connect', () => {
@@ -619,8 +629,24 @@ export default function App() {
 
   // --- Views ---
   if (showSplash) return <SplashView progress={loadProgress} />;
-  if (!isAuthReady) return <div className="min-h-screen flex items-center justify-center bg-indigo-600 text-white font-black">LOADING...</div>;
-  if (view === 'setup') return <SetupView onComplete={handleSetup} isMuted={isMuted} onToggleMute={() => setIsMuted(!isMuted)} />;
+  
+  if (!isAuthReady) return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-white">
+      <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+      <p className="text-slate-400 font-black uppercase tracking-widest text-xs">Checking Auth State...</p>
+    </div>
+  );
+
+  if (view === 'setup') return (
+    <SetupView 
+      onComplete={handleSetup} 
+      isMuted={isMuted} 
+      onToggleMute={() => setIsMuted(!isMuted)}
+      isOnline={isOnline}
+      connectionError={connectionError}
+      onReconnect={reconnectSocket}
+    />
+  );
   if (view === 'tutorial') return (
     <TutorialView 
       onSkip={() => {
@@ -632,7 +658,21 @@ export default function App() {
   );
   
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative">
+      {/* Offline Banner */}
+      {!isOnline && (
+        <div className="bg-red-600 text-white text-[10px] font-black py-1.5 px-4 text-center z-50 flex items-center justify-center gap-2 sticky top-0">
+          <WifiOff className="w-3 h-3" />
+          <span>OFFLINE: {connectionError || 'Server Connection Failed'}</span>
+          <button 
+            onClick={reconnectSocket}
+            className="ml-2 px-3 py-0.5 bg-white text-red-600 rounded-full hover:bg-red-50 transition-colors text-[8px] uppercase tracking-widest"
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <header className="p-4 flex justify-between items-center bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
         <div className="flex items-center gap-3">
@@ -2336,27 +2376,56 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
   );
 }
 
-function SetupView({ onComplete, isMuted, onToggleMute }: { onComplete: (name: string, iconId: string) => void, isMuted: boolean, onToggleMute: () => void }) {
+function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionError, onReconnect }: { 
+  onComplete: (name: string, iconId: string) => void, 
+  isMuted: boolean, 
+  onToggleMute: () => void,
+  isOnline: boolean,
+  connectionError: string | null,
+  onReconnect: () => void
+}) {
   const [name, setName] = useState('');
   const [selectedIcon, setSelectedIcon] = useState('smile');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const handleGoogleLogin = async () => {
     try {
+      setIsLoggingIn(true);
       setAuthError(null);
       await signInWithPopup(auth, googleProvider);
     } catch (error: any) {
       console.error('Google login error:', error);
       if (error.code === 'auth/popup-closed-by-user') {
         setAuthError('ログイン画面が閉じられました。もう一度お試しください。');
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        setAuthError('別のログインリクエストが進行中です。');
+      } else if (error.code === 'auth/popup-blocked') {
+        setAuthError('ポップアップがブロックされました。ブラウザの設定で許可してください。');
       } else {
-        setAuthError(error.message);
+        setAuthError(`ログインに失敗しました: ${error.message}`);
       }
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-6 relative overflow-hidden">
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 relative overflow-hidden">
+      {/* Offline Banner for Setup */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-[10px] font-black py-1.5 px-4 text-center z-50 flex items-center justify-center gap-2">
+          <WifiOff className="w-3 h-3" />
+          <span>OFFLINE: {connectionError || 'Server Connection Failed'}</span>
+          <button 
+            onClick={onReconnect}
+            className="ml-2 px-3 py-0.5 bg-white text-red-600 rounded-full hover:bg-red-50 transition-colors text-[8px] uppercase tracking-widest"
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
+
       {/* Mute Button for Setup */}
       <div className="absolute top-6 right-6 z-20">
         <button 
@@ -2398,10 +2467,15 @@ function SetupView({ onComplete, isMuted, onToggleMute }: { onComplete: (name: s
           )}
           <button
             onClick={handleGoogleLogin}
-            className="w-full py-3 bg-white border-2 border-slate-100 rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
+            disabled={isLoggingIn}
+            className="w-full py-3 bg-white border-2 border-slate-100 rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-95 shadow-sm disabled:opacity-50"
           >
-            <LogIn className="w-5 h-5 text-indigo-600" />
-            Googleでログイン
+            {isLoggingIn ? (
+              <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <LogIn className="w-5 h-5 text-indigo-600" />
+            )}
+            {isLoggingIn ? 'ログイン中...' : 'Googleでログイン'}
           </button>
 
           <div className="relative flex items-center py-2">

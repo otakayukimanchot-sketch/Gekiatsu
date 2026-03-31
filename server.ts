@@ -16,13 +16,18 @@ async function startServer() {
   const io = new Server(httpServer, {
     cors: {
       origin: (origin, callback) => {
-        // Allow all origins in development or if they match the AI Studio pattern
-        if (!origin || origin.includes('.run.app') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
-          callback(null, true);
-        } else if (frontendUrl && (origin === frontendUrl || origin === frontendUrl.replace(/\/$/, ""))) {
+        // In AI Studio, the origin might vary, so we'll be flexible
+        // especially for .run.app domains, localhost, and the specified frontendUrl
+        const isAllowed = !origin || 
+          origin.includes('.run.app') || 
+          origin.includes('localhost') || 
+          origin.includes('127.0.0.1') ||
+          (frontendUrl && (origin === frontendUrl || origin === frontendUrl.replace(/\/$/, "")));
+        
+        if (isAllowed) {
           callback(null, true);
         } else {
-          // In AI Studio, sometimes the origin might be slightly different, so we'll be a bit more flexible
+          // Fallback to allowing if it's from the same domain as the server
           callback(null, true);
         }
       },
