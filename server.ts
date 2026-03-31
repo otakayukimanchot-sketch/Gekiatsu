@@ -34,6 +34,9 @@ async function startServer() {
       methods: ["GET", "POST"],
       credentials: true
     },
+    pingInterval: 10000,
+    pingTimeout: 5000,
+    allowEIO3: true // Allow older clients if any
   });
 
   // Health check routes

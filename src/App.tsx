@@ -311,12 +311,14 @@ export default function App() {
     console.log('Initializing socket connection to:', socketUrl);
     
     socketRef.current = io(socketUrl, {
-      transports: ['websocket', 'polling'],
+      // Use polling first, then upgrade to websocket. 
+      // This is more reliable in environments with proxies like AI Studio.
+      transports: ['polling', 'websocket'],
       withCredentials: true,
-      reconnectionAttempts: 15, // Increased for more stability
+      reconnectionAttempts: 20,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 30000 // Increased timeout
+      timeout: 60000 // 60 seconds timeout
     });
     
     socketRef.current.on('connect', () => {
