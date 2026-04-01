@@ -307,7 +307,7 @@ export default function App() {
     
     // Determine the most stable socket URL
     let socketUrl = window.location.origin;
-    if (!isAiStudio && backendUrl && !backendUrl.includes('onrender.com') && !backendUrl.includes('vercel.app')) {
+    if (!isAiStudio && backendUrl) {
       socketUrl = backendUrl;
     }
 
