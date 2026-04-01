@@ -23,6 +23,7 @@ async function startServer() {
         // especially for .run.app domains, localhost, and the specified frontendUrl
         const isAllowed = !origin || 
           origin.includes('.run.app') || 
+          origin.includes('vercel.app') || 
           origin.includes('localhost') || 
           origin.includes('127.0.0.1') ||
           (frontendUrl && (origin === frontendUrl || origin === frontendUrl.replace(/\/$/, "")));

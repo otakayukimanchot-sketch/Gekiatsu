@@ -307,8 +307,18 @@ export default function App() {
     
     // Determine the most stable socket URL
     let socketUrl = window.location.origin;
-    if (!isAiStudio && backendUrl) {
-      socketUrl = backendUrl;
+    if (!isAiStudio) {
+      if (backendUrl) {
+        socketUrl = backendUrl;
+      } else if (window.location.hostname.includes('vercel.app')) {
+        // Fallback for Vercel deployment if VITE_BACKEND_URL is missing
+        socketUrl = 'https://server-jv1l.onrender.com';
+      }
+    }
+
+    // Wake up the backend if it's on Render (free tier sleeps)
+    if (socketUrl.includes('onrender.com')) {
+      fetch(`${socketUrl}/api/health`).catch(() => {});
     }
 
     console.log('Initializing socket connection to:', socketUrl);
@@ -333,7 +343,12 @@ export default function App() {
     socketRef.current.on('connect_error', (err) => {
       console.error('Socket connection error:', err.message, err);
       setIsOnline(false);
-      setConnectionError(`Connection failed: ${err.message}. Please check if the server is running and accessible.`);
+      
+      let errorMsg = `Connection failed: ${err.message}.`;
+      if (err.message === 'xhr poll error' || err.message === 'timeout') {
+        errorMsg += ' The server might be sleeping or unreachable. Please wait a moment and try again.';
+      }
+      setConnectionError(errorMsg);
       
       if (backendUrl && !window.location.hostname.includes('localhost')) {
         console.warn(`Failed to connect to backend at: ${backendUrl}. Please ensure VITE_BACKEND_URL is correct in Vercel settings.`);
