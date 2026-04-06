@@ -8,7 +8,7 @@ import {
   CheckCircle2, XCircle, Crown, Users, 
   Play, Settings, Info, ChevronRight, ChevronLeft,
   LogOut, MessageSquare, Send, Volume2, VolumeX,
-  LogIn, QrCode, Scan, X, Copy, Check, Star, Share2, ExternalLink, Github,
+  LogIn, QrCode, Scan, X, Copy, Check, Star, Share2, ExternalLink,
   BookOpen, Headphones
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
@@ -16,7 +16,7 @@ import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
-import { auth, googleProvider, githubProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
+import { auth, googleProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, User, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
 import FirebaseDemo from './components/FirebaseDemo';
 
 // --- Icons for Player ---
@@ -1116,8 +1116,8 @@ function SplashView({ progress }: { progress: number }) {
         transition={{ duration: 0.8 }}
         className="text-center"
       >
-        <h1 className="text-6xl md:text-8xl font-black text-slate-900 tracking-tighter italic mb-12">
-          激アツ英単語
+        <h1 className="text-6xl md:text-8xl font-black text-slate-900 tracking-tighter mb-12 font-brush">
+          記憶ポケット
         </h1>
         <div className="w-64 md:w-96 h-2 bg-slate-100 rounded-full overflow-hidden relative">
           <motion.div 
@@ -2509,7 +2509,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
     const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word} (${item.meaning})`);
     const lostWords = answerHistory.filter(item => item.status === 'lost').map(item => `・${item.word} (${item.meaning})`);
 
-    let shareText = `【激アツ英単語 - 復習リスト】\nアプリで英単語を特訓中！🔥\nhttps://ais-pre-rr2ttfs754ir6fyylr5a4z-247786600891.asia-northeast1.run.app\n\n`;
+    let shareText = `【記憶ポケット - 復習リスト】\nアプリで英単語を特訓中！🔥\nhttps://ais-pre-rr2ttfs754ir6fyylr5a4z-247786600891.asia-northeast1.run.app\n\n`;
 
     if (wrongWords.length > 0) {
       shareText += `■ 間違えた問題 (×)\n${wrongWords.join('\n')}\n\n`;
@@ -2526,7 +2526,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
     try {
       if (navigator.share) {
         await navigator.share({
-          title: '激アツ英単語 復習リスト',
+          title: '記憶ポケット 復習リスト',
           text: shareText,
         });
       } else {
@@ -2708,7 +2708,7 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
   const [step, setStep] = useState(0);
   const steps = [
     {
-      title: "激アツ英単語へようこそ！",
+      title: "記憶ポケットへようこそ！",
       desc: "このアプリは、ハイスピードで英単語をマスターし、ライバルと競い合うバトルアプリです。",
       icon: Zap,
       color: "bg-orange-500"
@@ -2828,39 +2828,6 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
     }
   };
 
-  const handleGithubLogin = async () => {
-    try {
-      setIsLoggingIn(true);
-      setAuthError(null);
-      await signInWithPopup(auth, githubProvider);
-    } catch (error: any) {
-      console.error('Github login error:', error);
-      if (error.code === 'auth/popup-closed-by-user') {
-        setAuthError('ログイン画面が閉じられました。もう一度お試しください。');
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        setAuthError('別のログインリクエストが進行中です。');
-      } else if (error.code === 'auth/popup-blocked') {
-        setAuthError('ポップアップがブロックされました。ブラウザの設定で許可してください。または、下の「リダイレクトでログイン」をお試しください。');
-      } else {
-        setAuthError(`ログインに失敗しました: ${error.message}`);
-      }
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleGithubLoginRedirect = async () => {
-    try {
-      setIsLoggingIn(true);
-      setAuthError(null);
-      await signInWithRedirect(auth, githubProvider);
-    } catch (error: any) {
-      console.error('Github redirect login error:', error);
-      setAuthError(`ログインに失敗しました: ${error.message}`);
-      setIsLoggingIn(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 relative overflow-hidden">
       {/* Offline Banner for Setup */}
@@ -2902,7 +2869,7 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
           >
             Hot & Exciting!
           </motion.div>
-          <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none mb-2">激アツ英単語</h1>
+          <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none mb-2 font-brush">記憶ポケット</h1>
           <p className="text-slate-500 font-bold">ログインして始めよう！</p>
         </div>
         
@@ -2930,36 +2897,15 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
               {isLoggingIn ? 'ログイン中...' : 'Googleでログイン'}
             </button>
 
-            <button
-              onClick={handleGithubLogin}
-              disabled={isLoggingIn}
-              className="w-full py-3 bg-slate-900 text-white rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-800 transition-all active:scale-95 shadow-sm disabled:opacity-50"
-            >
-              {isLoggingIn ? (
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              ) : (
-                <Github className="w-5 h-5 text-white" />
-              )}
-              {isLoggingIn ? 'ログイン中...' : 'GitHubでログイン'}
-            </button>
-
             {authError?.includes('ポップアップ') && (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2">
                 <button
                   onClick={handleGoogleLoginRedirect}
                   disabled={isLoggingIn}
                   className="w-full py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-[10px] text-slate-600 flex items-center justify-center gap-1 hover:bg-slate-100 transition-all"
                 >
                   <ExternalLink className="w-3 h-3" />
-                  Googleリダイレクト
-                </button>
-                <button
-                  onClick={handleGithubLoginRedirect}
-                  disabled={isLoggingIn}
-                  className="w-full py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-[10px] text-slate-600 flex items-center justify-center gap-1 hover:bg-slate-100 transition-all"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  GitHubリダイレクト
+                  Googleリダイレクトでログイン
                 </button>
               </div>
             )}

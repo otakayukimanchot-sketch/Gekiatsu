@@ -80,9 +80,9 @@ async function startServer() {
         });
 
         await transporter.sendMail({
-          from: `"Gekiatsu Eitango" <${process.env.SMTP_USER}>`,
+          from: `"記憶ポケット" <${process.env.SMTP_USER}>`,
           to: targetEmail,
-          subject: `【激アツ英単語】${type === 'suggestion' ? '提案' : '報告'}が届きました`,
+          subject: `【記憶ポケット】${type === 'suggestion' ? '提案' : '報告'}が届きました`,
           text: `種別: ${type === 'suggestion' ? '提案' : '報告'}\n送信者: ${player?.name || '不明'} (${player?.id || 'ID不明'})\n内容:\n${content}`
         });
         console.log("Email sent successfully via nodemailer");
