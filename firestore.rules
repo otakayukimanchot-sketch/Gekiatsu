@@ -95,7 +95,8 @@ service cloud.firestore {
              (!('photoURL' in data) || data.photoURL == null || isValidUrl(data.photoURL)) &&
              data.createdAt is timestamp &&
              data.updatedAt is timestamp &&
-             (!('favorites' in data) || (data.favorites is list && data.favorites.size() <= 100));
+             (!('favorites' in data) || (data.favorites is list && data.favorites.size() <= 100)) &&
+             (!('wrongQuestions' in data) || (data.wrongQuestions is list && data.wrongQuestions.size() <= 50));
     }
 
     function isValidQuizResult(data) {

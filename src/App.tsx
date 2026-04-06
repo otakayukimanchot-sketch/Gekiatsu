@@ -288,6 +288,7 @@ export default function App() {
                 displayName: user.displayName || null,
                 photoURL: user.photoURL || null,
                 createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
                 favorites: [],
                 wrongQuestions: []
               });
@@ -354,7 +355,8 @@ export default function App() {
     if (auth.currentUser) {
       try {
         await setDoc(doc(db, 'users', player.id), {
-          favorites: newFavorites
+          favorites: newFavorites,
+          updatedAt: serverTimestamp()
         }, { merge: true });
       } catch (error) {
         console.error("Error saving favorites:", error);
@@ -386,7 +388,8 @@ export default function App() {
     if (auth.currentUser) {
       try {
         await setDoc(doc(db, 'users', player.id), {
-          wrongQuestions: unique
+          wrongQuestions: unique,
+          updatedAt: serverTimestamp()
         }, { merge: true });
       } catch (error) {
         console.error("Error saving wrong questions:", error);
@@ -2476,6 +2479,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
 
   const opponent = matchState?.players?.find(p => p.id !== player?.id);
   const [isCopied, setIsCopied] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
   const handleSaveWrong = () => {
@@ -2499,6 +2503,9 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   };
 
   const handleShare = async () => {
+    if (isSharing) return;
+    setIsSharing(true);
+    
     const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word} (${item.meaning})`);
     const lostWords = answerHistory.filter(item => item.status === 'lost').map(item => `・${item.word} (${item.meaning})`);
 
@@ -2516,23 +2523,21 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
       shareText += `全問正解！完璧です！✨\n`;
     }
 
-    if (navigator.share) {
-      try {
+    try {
+      if (navigator.share) {
         await navigator.share({
           title: '激アツ英単語 復習リスト',
           text: shareText,
         });
-      } catch (err) {
-        console.error('Share failed:', err);
-      }
-    } else {
-      try {
+      } else {
         await navigator.clipboard.writeText(shareText);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
-      } catch (err) {
-        console.error('Clipboard failed:', err);
       }
+    } catch (err) {
+      console.error('Share failed:', err);
+    } finally {
+      setIsSharing(false);
     }
   };
 
