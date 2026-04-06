@@ -20,6 +20,7 @@ export interface Player {
   name: string;
   icon: string;
   favorites?: string[];
+  wrongQuestions?: Word[];
 }
 
 export interface PlayerState extends Player {

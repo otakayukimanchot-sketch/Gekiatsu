@@ -5,6 +5,7 @@ import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import nodemailer from "nodemailer";
+import cors from "cors";
 import type { MatchRoomState, Word } from "./src/types.ts";
 import { PACKS } from "./src/constants.ts";
 
@@ -13,34 +14,37 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const frontendUrl = process.env.VITE_FRONTEND_URL;
 
+  // CORS configuration
+  const corsOptions = {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      const isAllowed = !origin || 
+        origin.includes('.run.app') || 
+        origin.includes('vercel.app') || 
+        origin.includes('localhost') || 
+        origin.includes('127.0.0.1') ||
+        (frontendUrl && (origin === frontendUrl || origin === frontendUrl.replace(/\/$/, "")));
+      
+      if (isAllowed) {
+        callback(null, true);
+      } else {
+        // Fallback to allowing if it's from the same domain as the server
+        callback(null, true);
+      }
+    },
+    methods: ["GET", "POST"],
+    credentials: true
+  };
+
+  app.use(cors(corsOptions));
   app.use(express.json());
 
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
-    cors: {
-      origin: (origin, callback) => {
-        // In AI Studio, the origin might vary, so we'll be flexible
-        // especially for .run.app domains, localhost, and the specified frontendUrl
-        const isAllowed = !origin || 
-          origin.includes('.run.app') || 
-          origin.includes('vercel.app') || 
-          origin.includes('localhost') || 
-          origin.includes('127.0.0.1') ||
-          (frontendUrl && (origin === frontendUrl || origin === frontendUrl.replace(/\/$/, "")));
-        
-        if (isAllowed) {
-          callback(null, true);
-        } else {
-          // Fallback to allowing if it's from the same domain as the server
-          callback(null, true);
-        }
-      },
-      methods: ["GET", "POST"],
-      credentials: true
-    },
-    pingInterval: 10000,
-    pingTimeout: 5000,
-    allowEIO3: true // Allow older clients if any
+    cors: corsOptions,
+    pingInterval: 25000,
+    pingTimeout: 20000,
+    allowEIO3: true,
+    transports: ['websocket', 'polling']
   });
 
   // Health check routes

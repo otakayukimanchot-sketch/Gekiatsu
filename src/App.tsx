@@ -1,3 +1,4 @@
+import { GoogleGenAI, Modality } from "@google/genai";
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -7,14 +8,16 @@ import {
   CheckCircle2, XCircle, Crown, Users, 
   Play, Settings, Info, ChevronRight, ChevronLeft,
   LogOut, MessageSquare, Send, Volume2, VolumeX,
-  LogIn, QrCode, Scan, X, Copy, Check, Star, Share2
+  LogIn, QrCode, Scan, X, Copy, Check, Star, Share2, ExternalLink, Github,
+  BookOpen, Headphones
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
+import { auth, googleProvider, githubProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
+import FirebaseDemo from './components/FirebaseDemo';
 
 // --- Icons for Player ---
 const PLAYER_ICONS = [
@@ -24,6 +27,37 @@ const PLAYER_ICONS = [
   { id: 'gamepad', icon: Gamepad2, color: 'text-emerald-500' },
   { id: 'zap', icon: Zap, color: 'text-orange-500' },
 ];
+
+const playPcmAudio = (base64Data: string, sampleRate: number = 24000) => {
+  try {
+    const binaryString = atob(base64Data);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    const int16Array = new Int16Array(bytes.buffer);
+    const float32Array = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+      float32Array[i] = int16Array[i] / 32768;
+    }
+
+    const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioContext = new AudioContextClass();
+    
+    const audioBuffer = audioContext.createBuffer(1, float32Array.length, sampleRate);
+    audioBuffer.getChannelData(0).set(float32Array);
+
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext.destination);
+    source.start();
+  } catch (e) {
+    console.error("Error playing PCM audio:", e);
+  }
+};
 
 // --- Audio Effects ---
 const playSound = (type: 'correct' | 'wrong' | 'click') => {
@@ -40,7 +74,7 @@ const playSound = (type: 'correct' | 'wrong' | 'click') => {
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [loadProgress, setLoadProgress] = useState(0);
-  const [view, setView] = useState<'setup' | 'tutorial' | 'home' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join'>('setup');
+  const [view, setView] = useState<'setup' | 'tutorial' | 'home' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join' | 'firebase_demo'>('setup');
   const [player, setPlayer] = useState<Player | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = useState<boolean>(() => {
@@ -89,20 +123,65 @@ export default function App() {
   const reconnectSocket = () => {
     if (socketRef.current) {
       console.log('Manually reconnecting socket...');
+      
+      // Trigger wake-up again on manual reconnect
+      const isAiStudio = window.location.hostname.includes('.run.app');
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      let socketUrl = window.location.origin;
+      if (!isAiStudio) {
+        if (backendUrl) socketUrl = backendUrl;
+        else if (window.location.hostname.includes('vercel.app')) socketUrl = 'https://server-jv1l.onrender.com';
+      }
+      
+      if (socketUrl.includes('onrender.com')) {
+        fetch(`${socketUrl.replace(/\/$/, '')}/api/health`).catch(() => {});
+      }
+
       socketRef.current.disconnect();
       socketRef.current.connect();
     }
   };
 
-  const playAudio = (text: string) => {
+  const playAudio = async (text: string) => {
     if (isMuted) return;
-    // Cancel any ongoing speech before starting new one
+    
+    // Cancel any ongoing speech
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.9; // Slightly slower for clarity
-    window.speechSynthesis.speak(utterance);
-    setAudioPlayed(true);
+
+    try {
+      // Use Gemini TTS for high quality and gender selection
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const useFemale = Math.random() > 0.5;
+      const voiceName = useFemale ? 'Kore' : 'Puck'; // Kore is female, Puck is male
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: `Say clearly: ${text}` }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        playPcmAudio(base64Audio);
+        setAudioPlayed(true);
+      } else {
+        throw new Error("No audio data in response");
+      }
+    } catch (error) {
+      console.warn("Gemini TTS failed, falling back to window.speechSynthesis:", error);
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 0.9; // Slightly slower for clarity
+      window.speechSynthesis.speak(utterance);
+      setAudioPlayed(true);
+    }
   };
 
   // --- Stop Audio on view or question change ---
@@ -189,48 +268,71 @@ export default function App() {
   // --- Auth Setup ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Fetch favorites from Firestore
-        let favorites: string[] = [];
-        try {
-          const userDocRef = doc(db, 'users', user.uid);
-          const userDoc = await getDoc(userDocRef);
-          if (userDoc.exists()) {
-            favorites = userDoc.data().favorites || [];
-          } else {
-            // Initialize user document
-            await setDoc(userDocRef, {
-              uid: user.uid,
-              email: user.email || '',
-              displayName: user.displayName || null,
-              photoURL: user.photoURL || null,
-              createdAt: serverTimestamp(),
-              favorites: []
-            });
+      try {
+        if (user) {
+          // Fetch user data from Firestore
+          let favorites: string[] = [];
+          let wrongQuestions: Word[] = [];
+          try {
+            const userDocRef = doc(db, 'users', user.uid);
+            const userDoc = await getDoc(userDocRef);
+            if (userDoc.exists()) {
+              const data = userDoc.data();
+              favorites = data.favorites || [];
+              wrongQuestions = data.wrongQuestions || [];
+            } else {
+              // Initialize user document
+              await setDoc(userDocRef, {
+                uid: user.uid,
+                email: user.email || '',
+                displayName: user.displayName || null,
+                photoURL: user.photoURL || null,
+                createdAt: serverTimestamp(),
+                favorites: [],
+                wrongQuestions: []
+              });
+            }
+          } catch (error) {
+            console.error("Error fetching/initializing user data:", error);
+            // Don't throw here, just log it. We want the user to be able to login even if Firestore fails initially.
           }
-        } catch (error) {
-          console.error("Error fetching/initializing user data:", error);
-          handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
-        }
 
-        setPlayer({
-          id: user.uid,
-          name: user.displayName || 'Player',
-          icon: 'smile',
-          favorites
-        });
-        
-        // Show tutorial if not seen
-        if (localStorage.getItem('pokepoke_tutorial_seen') !== 'true') {
-          setView('tutorial');
+          setPlayer({
+            id: user.uid,
+            name: user.displayName || 'Player',
+            icon: 'smile',
+            favorites,
+            wrongQuestions
+          });
+          
+          // Show tutorial if not seen
+          if (localStorage.getItem('pokepoke_tutorial_seen') !== 'true') {
+            setView('tutorial');
+          } else {
+            setView('home');
+          }
         } else {
-          setView('home');
+          // Try to load guest user from localStorage
+          const savedPlayer = localStorage.getItem('pokepoke_player');
+          if (savedPlayer) {
+            try {
+              const parsed = JSON.parse(savedPlayer);
+              setPlayer(parsed);
+              setView('home');
+            } catch (e) {
+              setPlayer(null);
+              setView('setup');
+            }
+          } else {
+            setPlayer(null);
+            setView('setup');
+          }
         }
-      } else {
-        setPlayer(null);
-        setView('setup');
+      } catch (error) {
+        console.error("Auth state change error:", error);
+      } finally {
+        setIsAuthReady(true);
       }
-      setIsAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
@@ -244,17 +346,53 @@ export default function App() {
       ? currentFavorites.filter(id => id !== packId)
       : [...currentFavorites, packId];
     
-    setPlayer({ ...player, favorites: newFavorites });
+    const updatedPlayer = { ...player, favorites: newFavorites };
+    setPlayer(updatedPlayer);
     playSound('click');
 
-    // Persist to Firestore
-    try {
-      await setDoc(doc(db, 'users', player.id), {
-        favorites: newFavorites
-      }, { merge: true });
-    } catch (error) {
-      console.error("Error saving favorites:", error);
-      handleFirestoreError(error, OperationType.WRITE, `users/${player.id}`);
+    // Persist to Firestore if logged in, otherwise localStorage
+    if (auth.currentUser) {
+      try {
+        await setDoc(doc(db, 'users', player.id), {
+          favorites: newFavorites
+        }, { merge: true });
+      } catch (error) {
+        console.error("Error saving favorites:", error);
+        handleFirestoreError(error, OperationType.WRITE, `users/${player.id}`);
+      }
+    } else {
+      localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
+    }
+  };
+
+  const handleSaveWrongQuestions = async (newWrongWords: Word[]) => {
+    if (!player) return;
+    
+    const currentWrong = player.wrongQuestions || [];
+    // Add new wrong words to the front (newest first)
+    // We reverse newWrongWords assuming they are in chronological order from the session
+    const combined = [...[...newWrongWords].reverse(), ...currentWrong];
+    
+    // Filter out duplicates (keeping the first occurrence, which is the newest)
+    // and limit to the latest 30 questions (deleting oldest from the end)
+    const unique = combined.filter((word, index, self) => 
+      index === self.findIndex((t) => t.word === word.word)
+    ).slice(0, 30);
+
+    const updatedPlayer = { ...player, wrongQuestions: unique };
+    setPlayer(updatedPlayer);
+    
+    // Persist
+    if (auth.currentUser) {
+      try {
+        await setDoc(doc(db, 'users', player.id), {
+          wrongQuestions: unique
+        }, { merge: true });
+      } catch (error) {
+        console.error("Error saving wrong questions:", error);
+      }
+    } else {
+      localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
     }
   };
 
@@ -316,17 +454,21 @@ export default function App() {
       }
     }
 
+    // Clean up socketUrl (remove trailing slash)
+    socketUrl = socketUrl.replace(/\/$/, '');
+
     // Wake up the backend if it's on Render (free tier sleeps)
     if (socketUrl.includes('onrender.com')) {
+      console.log('Waking up Render backend...');
       fetch(`${socketUrl}/api/health`).catch(() => {});
     }
 
     console.log('Initializing socket connection to:', socketUrl);
     
     socketRef.current = io(socketUrl, {
-      // Use polling first, then upgrade to websocket. 
-      // This is more reliable in environments with proxies like AI Studio.
-      transports: ['polling', 'websocket'],
+      // Use websocket first, then fallback to polling. 
+      // This is more stable in environments with proxies like AI Studio.
+      transports: ['websocket', 'polling'],
       withCredentials: true,
       reconnectionAttempts: 20,
       reconnectionDelay: 1000,
@@ -345,7 +487,7 @@ export default function App() {
       setIsOnline(false);
       
       let errorMsg = `Connection failed: ${err.message}.`;
-      if (err.message === 'xhr poll error' || err.message === 'timeout') {
+      if (err.message === 'xhr poll error' || err.message === 'timeout' || err.message === 'server error') {
         errorMsg += ' The server might be sleeping or unreachable. Please wait a moment and try again.';
       }
       setConnectionError(errorMsg);
@@ -574,7 +716,9 @@ export default function App() {
     const newPlayer: Player = {
       id: Math.random().toString(36).substr(2, 9),
       name,
-      icon: iconId
+      icon: iconId,
+      favorites: [],
+      wrongQuestions: []
     };
     setPlayer(newPlayer);
     localStorage.setItem('pokepoke_player', JSON.stringify(newPlayer));
@@ -620,6 +764,7 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await signOut(auth);
+      localStorage.removeItem('pokepoke_player');
       setPlayer(null);
       setView('setup');
     } catch (error) {
@@ -660,6 +805,26 @@ export default function App() {
       console.error('Suggestion submission error:', error);
       alert('送信に失敗しました。時間をおいて再度お試しください。');
     }
+  };
+
+  const handleStartWrongQuestionsQuiz = () => {
+    if (!player?.wrongQuestions || player.wrongQuestions.length === 0) {
+      alert('保存された間違えた問題はありません。');
+      return;
+    }
+    
+    const wrongPack: Pack = {
+      id: 'wrong_questions',
+      name: '間違えた問題',
+      description: '最近間違えた問題の復習パックです（最大30問）',
+      category: '復習',
+      color: 'bg-red-500',
+      words: player.wrongQuestions,
+      type: 'vocabulary'
+    };
+    
+    setSelectedPack(wrongPack);
+    setView('training_config');
   };
 
   // --- Views ---
@@ -779,16 +944,29 @@ export default function App() {
                 setSelectedPack(pack); 
                 setView('training_config'); 
               }} 
-              onSuggestion={() => {
-                playSound('click');
-                setView('suggestion');
-              }}
+              onWrongQuestions={handleStartWrongQuestionsQuiz}
               onFriendMatch={() => {
                 playSound('click');
                 setView('friend_match_setup');
               }}
               onToggleFavorite={handleToggleFavorite}
+              onFirebaseDemo={() => {
+                playSound('click');
+                setView('firebase_demo');
+              }}
             />
+          )}
+          {view === 'firebase_demo' && (
+            <div className="p-6">
+              <button 
+                onClick={() => setView('home')}
+                className="mb-6 flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold text-sm transition-colors"
+              >
+                <ChevronLeft className="w-5 h-5" />
+                Back to Home
+              </button>
+              <FirebaseDemo />
+            </div>
           )}
           {view === 'suggestion' && (
             <SuggestionFormView 
@@ -893,6 +1071,7 @@ export default function App() {
               timeTaken={Math.floor((endTime - startTime) / 1000)}
               opponentScore={opponentScore}
               answerHistory={answerHistory}
+              onSaveWrongQuestions={handleSaveWrongQuestions}
               onRetry={() => {
                 if (matchState) {
                   if (matchState.roomId) {
@@ -1491,28 +1670,45 @@ function QuizView({
   );
 }
 
-function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch, onToggleFavorite }: { 
+function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onToggleFavorite, onFirebaseDemo }: { 
   player: Player | null, 
   onSelectPack: (pack: Pack) => void, 
-  onSuggestion: () => void,
+  onWrongQuestions: () => void,
   onFriendMatch: () => void,
-  onToggleFavorite: (packId: string) => void
+  onToggleFavorite: (packId: string) => void,
+  onFirebaseDemo: () => void
 }) {
+  const [activeTab, setActiveTab] = useState<'vocabulary' | 'listening'>('vocabulary');
   const favorites = player?.favorites || [];
-  const favoritePacks = PACKS.filter(p => favorites.includes(p.id));
-
-  const baseCategories = Array.from(new Set(PACKS.map(p => p.category))).sort((a, b) => {
-    const order = ['TOEIC', '英語', '英検'];
-    const indexA = order.indexOf(a);
-    const indexB = order.indexOf(b);
-    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-    if (indexA !== -1) return -1;
-    if (indexB !== -1) return 1;
-    return a.localeCompare(b);
+  const wrongQuestions = player?.wrongQuestions || [];
+  
+  const favoritePacks = PACKS.filter(p => favorites.includes(p.id)).filter(p => {
+    if (activeTab === 'vocabulary') return p.category !== 'リスニング';
+    return p.category === 'リスニング';
   });
 
+  const baseCategories = Array.from(new Set(PACKS.map(p => p.category)))
+    .filter(c => {
+      if (activeTab === 'vocabulary') return c !== 'リスニング';
+      return c === 'リスニング';
+    })
+    .sort((a, b) => {
+      const order = ['TOEIC', '英語', '英検'];
+      const indexA = order.indexOf(a);
+      const indexB = order.indexOf(b);
+      if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+      if (indexA !== -1) return -1;
+      if (indexB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+
   const categories = favoritePacks.length > 0 ? ['お気に入り', ...baseCategories] : baseCategories;
+
   const [expandedCategories, setExpandedCategories] = useState<string[]>(categories);
+
+  useEffect(() => {
+    setExpandedCategories(categories);
+  }, [activeTab]);
 
   const toggleCategory = (category: string) => {
     setExpandedCategories(prev => 
@@ -1524,16 +1720,53 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch, onToggleF
 
   return (
     <div className="p-6 pb-24">
-      <div className="mb-8 text-center">
+      <div className="mb-8 text-center flex flex-col items-center gap-4">
         <h1 className="text-xs font-black text-slate-400 uppercase tracking-widest">SELECT A PACK TO START</h1>
+        <button 
+          onClick={onFirebaseDemo}
+          className="px-4 py-2 bg-blue-50 text-blue-600 rounded-full text-xs font-bold hover:bg-blue-100 transition-colors flex items-center gap-2"
+        >
+          <Zap className="w-3 h-3" />
+          Firebase Demo
+        </button>
+      </div>
+
+      {/* Tab Switcher */}
+      <div className="flex p-1 bg-slate-100 rounded-2xl mb-8 max-w-sm mx-auto">
+        <button
+          onClick={() => setActiveTab('vocabulary')}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-black text-sm transition-all ${
+            activeTab === 'vocabulary' 
+              ? 'bg-white text-indigo-600 shadow-sm' 
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          <span>単語</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('listening')}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-black text-sm transition-all ${
+            activeTab === 'listening' 
+              ? 'bg-white text-indigo-600 shadow-sm' 
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Headphones className="w-4 h-4" />
+          <span>リスニング</span>
+        </button>
       </div>
 
       <div className="space-y-6">
         {categories.map(category => {
           const isExpanded = expandedCategories.includes(category);
-          const categoryPacks = category === 'お気に入り' 
-            ? favoritePacks 
-            : PACKS.filter(p => p.category === category);
+          let categoryPacks: Pack[] = [];
+          
+          if (category === 'お気に入り') {
+            categoryPacks = favoritePacks;
+          } else {
+            categoryPacks = PACKS.filter(p => p.category === category);
+          }
 
           return (
             <section key={category} className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
@@ -1642,13 +1875,13 @@ function HomeView({ player, onSelectPack, onSuggestion, onFriendMatch, onToggleF
               <span className="font-black text-slate-700 text-sm">Friend Match</span>
            </button>
            <button 
-              onClick={onSuggestion}
+              onClick={onWrongQuestions}
               className="p-6 bg-white rounded-3xl border-2 border-slate-100 flex flex-col items-center gap-3 shadow-sm hover:border-indigo-500 transition-all group"
             >
-              <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center group-hover:bg-emerald-600 transition-colors">
-                 <MessageSquare className="w-6 h-6 text-emerald-600 group-hover:text-white" />
+              <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center group-hover:bg-red-600 transition-colors">
+                 <RotateCcw className="w-6 h-6 text-red-600 group-hover:text-white" />
               </div>
-              <span className="font-black text-slate-700 text-sm">提案・報告</span>
+              <span className="font-black text-slate-700 text-sm">間違えた問題</span>
            </button>
         </div>
       </div>
@@ -1806,33 +2039,35 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
               </div>
             </div>
 
-            <div className="bg-indigo-900 rounded-3xl p-6 shadow-2xl">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
-                  <Users className="w-5 h-5 text-white" />
+            {pack.id !== 'wrong_questions' && (
+              <div className="bg-indigo-900 rounded-3xl p-6 shadow-2xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
+                    <Users className="w-5 h-5 text-white" />
+                  </div>
+                  <span className="font-black text-white uppercase tracking-tight">リアルタイムバトル</span>
                 </div>
-                <span className="font-black text-white uppercase tracking-tight">リアルタイムバトル</span>
+                <div className="flex flex-wrap gap-3 mb-6">
+                  {[10, 30, 50, 100].map(count => (
+                    <button
+                      key={count}
+                      onClick={() => setSelectedCount(count)}
+                      className={`flex-1 min-w-[100px] py-4 rounded-2xl font-black transition-all ${
+                        selectedCount === count ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white/50 hover:bg-white/20'
+                      }`}
+                    >
+                      {count} Questions
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => onStartBattle(selectedCount)}
+                  className="w-full py-5 bg-white text-slate-900 rounded-2xl font-black text-xl flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl"
+                >
+                  FIND MATCH <ChevronRight className="w-6 h-6" />
+                </button>
               </div>
-              <div className="flex flex-wrap gap-3 mb-6">
-                {[10, 30, 50, 100].map(count => (
-                  <button
-                    key={count}
-                    onClick={() => setSelectedCount(count)}
-                    className={`flex-1 min-w-[100px] py-4 rounded-2xl font-black transition-all ${
-                      selectedCount === count ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white/50 hover:bg-white/20'
-                    }`}
-                  >
-                    {count} Questions
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={() => onStartBattle(selectedCount)}
-                className="w-full py-5 bg-white text-slate-900 rounded-2xl font-black text-xl flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl"
-              >
-                FIND MATCH <ChevronRight className="w-6 h-6" />
-              </button>
-            </div>
+            )}
           </div>
 
           {/* Word List Display */}
@@ -1919,7 +2154,9 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
   onJoinMatch: () => void,
   onSelectPack: (pack: Pack) => void
 }) {
-  const [isSelectingPack, setIsSelectingPack] = useState(!pack);
+  // If the pack is "wrong_questions", we must force selection of a real pack
+  const initialIsSelecting = !pack || pack.id === 'wrong_questions';
+  const [isSelectingPack, setIsSelectingPack] = useState(initialIsSelecting);
 
   if (isSelectingPack) {
     return (
@@ -2217,7 +2454,7 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
     </motion.div>
   );
 }
-function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, onRetry, onHome, isRematchRequested, onRematch, matchState, player, answerHistory }: { 
+function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, onRetry, onHome, isRematchRequested, onRematch, matchState, player, answerHistory, onSaveWrongQuestions }: { 
   mode: 'training' | 'battle', 
   score: number, 
   wrongCount: number,
@@ -2230,7 +2467,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   onRematch?: () => void,
   matchState?: MatchRoomState | null,
   player?: Player | null,
-  answerHistory: { word: string, meaning: string, status: 'correct' | 'wrong' | 'lost' }[]
+  answerHistory: { word: string, meaning: string, status: 'correct' | 'wrong' | 'lost' }[],
+  onSaveWrongQuestions: (words: Word[]) => void
 }) {
   const isWin = mode === 'battle' ? (opponentScore !== undefined && score > opponentScore) : true;
   const isDraw = mode === 'battle' && opponentScore !== undefined && score === opponentScore;
@@ -2238,6 +2476,27 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
 
   const opponent = matchState?.players?.find(p => p.id !== player?.id);
   const [isCopied, setIsCopied] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+
+  const handleSaveWrong = () => {
+    const wrongWords = answerHistory
+      .filter(item => item.status === 'wrong' || item.status === 'lost')
+      .map(item => {
+        // Try to find the full Word object in PACKS
+        for (const pack of PACKS) {
+          const found = pack.words.find(w => w.word === item.word);
+          if (found) return found;
+        }
+        return { word: item.word, meaning: item.meaning, choices: [] };
+      });
+    
+    if (wrongWords.length > 0) {
+      onSaveWrongQuestions(wrongWords as Word[]);
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 2000);
+      playSound('correct');
+    }
+  };
 
   const handleShare = async () => {
     const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word} (${item.meaning})`);
@@ -2387,6 +2646,19 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
           </button>
           
           <button
+            onClick={() => { playSound('click'); handleSaveWrong(); }}
+            disabled={isSaved || (answerHistory.filter(i => i.status !== 'correct').length === 0)}
+            className={`w-full py-5 rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center gap-2 border-2 ${
+              isSaved 
+              ? 'bg-emerald-50 border-emerald-500 text-emerald-600' 
+              : 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100'
+            }`}
+          >
+            {isSaved ? <Check className="w-6 h-6" /> : <Star className={`w-6 h-6 ${isSaved ? 'fill-amber-600' : ''}`} />}
+            {isSaved ? 'SAVED TO WRONG QUESTIONS!' : 'KEEP WRONG QUESTIONS'}
+          </button>
+
+          <button
             onClick={() => { playSound('click'); handleShare(); }}
             className={`w-full py-5 rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center gap-2 border-2 ${
               isCopied 
@@ -2530,11 +2802,56 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
       } else if (error.code === 'auth/cancelled-popup-request') {
         setAuthError('別のログインリクエストが進行中です。');
       } else if (error.code === 'auth/popup-blocked') {
-        setAuthError('ポップアップがブロックされました。ブラウザの設定で許可してください。');
+        setAuthError('ポップアップがブロックされました。ブラウザの設定で許可してください。または、下の「リダイレクトでログイン」をお試しください。');
       } else {
         setAuthError(`ログインに失敗しました: ${error.message}`);
       }
     } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleGoogleLoginRedirect = async () => {
+    try {
+      setIsLoggingIn(true);
+      setAuthError(null);
+      await signInWithRedirect(auth, googleProvider);
+    } catch (error: any) {
+      console.error('Google redirect login error:', error);
+      setAuthError(`ログインに失敗しました: ${error.message}`);
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleGithubLogin = async () => {
+    try {
+      setIsLoggingIn(true);
+      setAuthError(null);
+      await signInWithPopup(auth, githubProvider);
+    } catch (error: any) {
+      console.error('Github login error:', error);
+      if (error.code === 'auth/popup-closed-by-user') {
+        setAuthError('ログイン画面が閉じられました。もう一度お試しください。');
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        setAuthError('別のログインリクエストが進行中です。');
+      } else if (error.code === 'auth/popup-blocked') {
+        setAuthError('ポップアップがブロックされました。ブラウザの設定で許可してください。または、下の「リダイレクトでログイン」をお試しください。');
+      } else {
+        setAuthError(`ログインに失敗しました: ${error.message}`);
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleGithubLoginRedirect = async () => {
+    try {
+      setIsLoggingIn(true);
+      setAuthError(null);
+      await signInWithRedirect(auth, githubProvider);
+    } catch (error: any) {
+      console.error('Github redirect login error:', error);
+      setAuthError(`ログインに失敗しました: ${error.message}`);
       setIsLoggingIn(false);
     }
   };
@@ -2594,18 +2911,54 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
               {authError}
             </motion.div>
           )}
-          <button
-            onClick={handleGoogleLogin}
-            disabled={isLoggingIn}
-            className="w-full py-3 bg-white border-2 border-slate-100 rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-95 shadow-sm disabled:opacity-50"
-          >
-            {isLoggingIn ? (
-              <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-            ) : (
-              <LogIn className="w-5 h-5 text-indigo-600" />
+          <div className="grid grid-cols-1 gap-3">
+            <button
+              onClick={handleGoogleLogin}
+              disabled={isLoggingIn}
+              className="w-full py-3 bg-white border-2 border-slate-100 rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+            >
+              {isLoggingIn ? (
+                <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <LogIn className="w-5 h-5 text-indigo-600" />
+              )}
+              {isLoggingIn ? 'ログイン中...' : 'Googleでログイン'}
+            </button>
+
+            <button
+              onClick={handleGithubLogin}
+              disabled={isLoggingIn}
+              className="w-full py-3 bg-slate-900 text-white rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-800 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+            >
+              {isLoggingIn ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <Github className="w-5 h-5 text-white" />
+              )}
+              {isLoggingIn ? 'ログイン中...' : 'GitHubでログイン'}
+            </button>
+
+            {authError?.includes('ポップアップ') && (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleGoogleLoginRedirect}
+                  disabled={isLoggingIn}
+                  className="w-full py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-[10px] text-slate-600 flex items-center justify-center gap-1 hover:bg-slate-100 transition-all"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Googleリダイレクト
+                </button>
+                <button
+                  onClick={handleGithubLoginRedirect}
+                  disabled={isLoggingIn}
+                  className="w-full py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-[10px] text-slate-600 flex items-center justify-center gap-1 hover:bg-slate-100 transition-all"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  GitHubリダイレクト
+                </button>
+              </div>
             )}
-            {isLoggingIn ? 'ログイン中...' : 'Googleでログイン'}
-          </button>
+          </div>
 
           <div className="relative flex items-center py-2">
             <div className="flex-grow border-t border-slate-100"></div>

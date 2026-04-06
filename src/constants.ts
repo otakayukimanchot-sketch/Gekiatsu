@@ -20,6 +20,8 @@ import { CONFUSING_IDIOMS_WORDS } from './data/confusingIdioms.ts';
 import { TOEIC_GOLD_WORDS } from './data/toeicGold.ts';
 import { TOEIC_OVERLORD_WORDS } from './data/toeicOverlord.ts';
 import { TOEIC_LISTENING_WORDS } from './data/listening.ts';
+import { TOEIC_LISTENING_KAI_WORDS } from './data/listening_kai.ts';
+import { TOEIC_PATTERN_WORDS } from './data/toeicPattern.ts';
 
 export const PACKS: Pack[] = [
   // --- TOEIC ---
@@ -75,10 +77,27 @@ export const PACKS: Pack[] = [
     id: 'toeic-listening',
     name: 'TOEICリスニング特訓',
     description: '音声を聞いて瞬時に理解する。先読みと瞬時理解を鍛える。',
-    category: 'TOEIC',
+    category: 'リスニング',
     color: 'bg-gradient-to-br from-red-500 to-rose-700',
     words: TOEIC_LISTENING_WORDS,
     type: 'listening',
+  },
+  {
+    id: 'toeic-listening-kai',
+    name: 'TOEICリスニング改',
+    description: 'さらに実践的なリスニング問題で、耳を徹底的に鍛える。',
+    category: 'リスニング',
+    color: 'bg-gradient-to-br from-purple-500 to-indigo-700',
+    words: TOEIC_LISTENING_KAI_WORDS,
+    type: 'listening',
+  },
+  {
+    id: 'toeic-pattern',
+    name: 'TOEICのパターン演習',
+    description: 'TOEIC Part 5/6で頻出の文法・語彙パターンを徹底攻略。',
+    category: 'TOEIC',
+    color: 'bg-gradient-to-br from-emerald-500 to-teal-700',
+    words: TOEIC_PATTERN_WORDS,
   },
 
   // --- 英語 ---

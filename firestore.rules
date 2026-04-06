@@ -13,6 +13,7 @@ service cloud.firestore {
     //   - displayName: string (optional)
     //   - photoURL: string (optional, url format)
     //   - createdAt: timestamp (required)
+    //   - updatedAt: timestamp (required)
     //   - favorites: list (optional, strings)
     //
     // Collection: quizResults
@@ -93,6 +94,7 @@ service cloud.firestore {
              (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() < 100)) &&
              (!('photoURL' in data) || data.photoURL == null || isValidUrl(data.photoURL)) &&
              data.createdAt is timestamp &&
+             data.updatedAt is timestamp &&
              (!('favorites' in data) || (data.favorites is list && data.favorites.size() <= 100));
     }
 
