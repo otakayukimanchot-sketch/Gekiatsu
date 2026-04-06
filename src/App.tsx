@@ -8,7 +8,7 @@ import {
   CheckCircle2, XCircle, Crown, Users, 
   Play, Settings, Info, ChevronRight, ChevronLeft,
   LogOut, MessageSquare, Send, Volume2, VolumeX,
-  LogIn, QrCode, Scan, X, Copy, Check, Star, Share2, ExternalLink,
+  LogIn, QrCode, Scan, X, Copy, Check, Star, Share2, ExternalLink, Github,
   BookOpen, Headphones
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
@@ -16,7 +16,7 @@ import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
-import { auth, googleProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, User, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
+import { auth, googleProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
 import FirebaseDemo from './components/FirebaseDemo';
 
 // --- Icons for Player ---
@@ -1116,8 +1116,8 @@ function SplashView({ progress }: { progress: number }) {
         transition={{ duration: 0.8 }}
         className="text-center"
       >
-        <h1 className="text-6xl md:text-8xl font-black text-slate-900 tracking-tighter mb-12 font-brush">
-          記憶ポケット
+        <h1 className="text-6xl md:text-8xl font-black text-slate-900 tracking-tighter italic mb-12">
+          激アツ英単語
         </h1>
         <div className="w-64 md:w-96 h-2 bg-slate-100 rounded-full overflow-hidden relative">
           <motion.div 
@@ -2509,7 +2509,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
     const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word} (${item.meaning})`);
     const lostWords = answerHistory.filter(item => item.status === 'lost').map(item => `・${item.word} (${item.meaning})`);
 
-    let shareText = `【記憶ポケット - 復習リスト】\nアプリで英単語を特訓中！🔥\nhttps://ais-pre-rr2ttfs754ir6fyylr5a4z-247786600891.asia-northeast1.run.app\n\n`;
+    let shareText = `【激アツ英単語 - 復習リスト】\nアプリで英単語を特訓中！🔥\nhttps://ais-pre-rr2ttfs754ir6fyylr5a4z-247786600891.asia-northeast1.run.app\n\n`;
 
     if (wrongWords.length > 0) {
       shareText += `■ 間違えた問題 (×)\n${wrongWords.join('\n')}\n\n`;
@@ -2526,7 +2526,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
     try {
       if (navigator.share) {
         await navigator.share({
-          title: '記憶ポケット 復習リスト',
+          title: '激アツ英単語 復習リスト',
           text: shareText,
         });
       } else {
@@ -2708,7 +2708,7 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
   const [step, setStep] = useState(0);
   const steps = [
     {
-      title: "記憶ポケットへようこそ！",
+      title: "激アツ英単語へようこそ！",
       desc: "このアプリは、ハイスピードで英単語をマスターし、ライバルと競い合うバトルアプリです。",
       icon: Zap,
       color: "bg-orange-500"
@@ -2869,7 +2869,7 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
           >
             Hot & Exciting!
           </motion.div>
-          <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none mb-2 font-brush">記憶ポケット</h1>
+          <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none mb-2">激アツ英単語</h1>
           <p className="text-slate-500 font-bold">ログインして始めよう！</p>
         </div>
         
@@ -2905,7 +2905,7 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
                   className="w-full py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-[10px] text-slate-600 flex items-center justify-center gap-1 hover:bg-slate-100 transition-all"
                 >
                   <ExternalLink className="w-3 h-3" />
-                  Googleリダイレクトでログイン
+                  Googleリダイレクト
                 </button>
               </div>
             )}
