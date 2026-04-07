@@ -27,37 +27,6 @@ const PLAYER_ICONS = [
   { id: 'zap', icon: Zap, color: 'text-orange-500' },
 ];
 
-const playPcmAudio = (base64Data: string, sampleRate: number = 24000) => {
-  try {
-    const binaryString = atob(base64Data);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    const int16Array = new Int16Array(bytes.buffer);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 32768;
-    }
-
-    const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return;
-    const audioContext = new AudioContextClass();
-    
-    const audioBuffer = audioContext.createBuffer(1, float32Array.length, sampleRate);
-    audioBuffer.getChannelData(0).set(float32Array);
-
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
-    source.start();
-  } catch (e) {
-    console.error("Error playing PCM audio:", e);
-  }
-};
-
 // --- Audio Effects ---
 const playSound = (type: 'correct' | 'wrong' | 'click') => {
   const sfx = {
@@ -88,6 +57,7 @@ export default function App() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [listeningCountdown, setListeningCountdown] = useState<number | null>(null);
   const [audioPlayed, setAudioPlayed] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -112,6 +82,7 @@ export default function App() {
   const playPcmAudio = (base64Data: string, sampleRate: number = 24000) => {
     try {
       stopAudio();
+      setIsAudioPlaying(true);
 
       const binaryString = atob(base64Data);
       const len = binaryString.length;
@@ -145,9 +116,11 @@ export default function App() {
         if (audioSourceRef.current === source) {
           audioSourceRef.current = null;
         }
+        setIsAudioPlaying(false);
       };
     } catch (e) {
       console.error("Error playing PCM audio:", e);
+      setIsAudioPlaying(false);
     }
   };
   const [quizQuestions, setQuizQuestions] = useState<Word[]>([]);
@@ -234,9 +207,12 @@ export default function App() {
       }
     } catch (error) {
       console.warn("Gemini TTS failed, falling back to window.speechSynthesis:", error);
+      setIsAudioPlaying(true);
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'en-US';
       utterance.rate = 0.9; // Slightly slower for clarity
+      utterance.onend = () => setIsAudioPlaying(false);
+      utterance.onerror = () => setIsAudioPlaying(false);
       window.speechSynthesis.speak(utterance);
       setAudioPlayed(true);
     }
@@ -379,7 +355,7 @@ export default function App() {
   useEffect(() => {
     if (view !== 'training' && view !== 'battle') return;
     if (answerStatus !== 'idle') return;
-    if (selectedPack?.type === 'listening' && listeningCountdown !== null) return;
+    if (selectedPack?.type === 'listening' && (listeningCountdown !== null || isAudioPlaying)) return;
 
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
@@ -395,7 +371,7 @@ export default function App() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [view, currentIndex, answerStatus, selectedPack, listeningCountdown]);
+  }, [view, currentIndex, answerStatus, selectedPack, listeningCountdown, isAudioPlaying]);
 
   // Listening Countdown Effect
   useEffect(() => {
