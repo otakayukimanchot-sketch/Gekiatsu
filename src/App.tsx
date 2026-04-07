@@ -16,8 +16,7 @@ import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
 import { PACKS } from './constants';
 import { Pack, Word, Player, MatchRoomState } from './types';
-import { auth, googleProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
-import FirebaseDemo from './components/FirebaseDemo';
+import { auth, signOut, db, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, handleFirestoreError, OperationType } from './firebase';
 
 // --- Icons for Player ---
 const PLAYER_ICONS = [
@@ -74,7 +73,7 @@ const playSound = (type: 'correct' | 'wrong' | 'click') => {
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [loadProgress, setLoadProgress] = useState(0);
-  const [view, setView] = useState<'setup' | 'tutorial' | 'home' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join' | 'firebase_demo'>('setup');
+  const [view, setView] = useState<'setup' | 'tutorial' | 'home' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join'>('setup');
   const [player, setPlayer] = useState<Player | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = useState<boolean>(() => {
@@ -90,7 +89,67 @@ export default function App() {
   const [listeningCountdown, setListeningCountdown] = useState<number | null>(null);
   const [audioPlayed, setAudioPlayed] = useState(false);
   
-  // Quiz State
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
+  const stopAudio = () => {
+    if (audioSourceRef.current) {
+      try {
+        audioSourceRef.current.stop();
+        audioSourceRef.current.disconnect();
+      } catch (e) {}
+      audioSourceRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+    }
+    window.speechSynthesis.cancel();
+  };
+
+  const playPcmAudio = (base64Data: string, sampleRate: number = 24000) => {
+    try {
+      stopAudio();
+
+      const binaryString = atob(base64Data);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      const int16Array = new Int16Array(bytes.buffer);
+      const float32Array = new Float32Array(int16Array.length);
+      for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768;
+      }
+
+      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      
+      const audioContext = new AudioContextClass();
+      audioContextRef.current = audioContext;
+      
+      const audioBuffer = audioContext.createBuffer(1, float32Array.length, sampleRate);
+      audioBuffer.getChannelData(0).set(float32Array);
+
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+      source.start();
+      audioSourceRef.current = source;
+
+      source.onended = () => {
+        if (audioSourceRef.current === source) {
+          audioSourceRef.current = null;
+        }
+      };
+    } catch (e) {
+      console.error("Error playing PCM audio:", e);
+    }
+  };
   const [quizQuestions, setQuizQuestions] = useState<Word[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [score, setScore] = useState(0);
@@ -145,8 +204,7 @@ export default function App() {
   const playAudio = async (text: string) => {
     if (isMuted) return;
     
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
+    stopAudio();
 
     try {
       // Use Gemini TTS for high quality and gender selection
@@ -186,7 +244,7 @@ export default function App() {
 
   // --- Stop Audio on view or question change ---
   useEffect(() => {
-    window.speechSynthesis.cancel();
+    stopAudio();
   }, [view, currentIndex]);
 
   // --- Scroll to top on view change ---
@@ -265,77 +323,23 @@ export default function App() {
     }
   }, [isMuted, view, hasInteracted, showSplash, selectedPack]);
 
-  // --- Auth Setup ---
+  // --- Player Setup ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const savedPlayer = localStorage.getItem('pokepoke_player');
+    if (savedPlayer) {
       try {
-        if (user) {
-          // Fetch user data from Firestore
-          let favorites: string[] = [];
-          let wrongQuestions: Word[] = [];
-          try {
-            const userDocRef = doc(db, 'users', user.uid);
-            const userDoc = await getDoc(userDocRef);
-            if (userDoc.exists()) {
-              const data = userDoc.data();
-              favorites = data.favorites || [];
-              wrongQuestions = data.wrongQuestions || [];
-            } else {
-              // Initialize user document
-              await setDoc(userDocRef, {
-                uid: user.uid,
-                email: user.email || '',
-                displayName: user.displayName || null,
-                photoURL: user.photoURL || null,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-                favorites: [],
-                wrongQuestions: []
-              });
-            }
-          } catch (error) {
-            console.error("Error fetching/initializing user data:", error);
-            // Don't throw here, just log it. We want the user to be able to login even if Firestore fails initially.
-          }
-
-          setPlayer({
-            id: user.uid,
-            name: user.displayName || 'Player',
-            icon: 'smile',
-            favorites,
-            wrongQuestions
-          });
-          
-          // Show tutorial if not seen
-          if (localStorage.getItem('pokepoke_tutorial_seen') !== 'true') {
-            setView('tutorial');
-          } else {
-            setView('home');
-          }
-        } else {
-          // Try to load guest user from localStorage
-          const savedPlayer = localStorage.getItem('pokepoke_player');
-          if (savedPlayer) {
-            try {
-              const parsed = JSON.parse(savedPlayer);
-              setPlayer(parsed);
-              setView('home');
-            } catch (e) {
-              setPlayer(null);
-              setView('setup');
-            }
-          } else {
-            setPlayer(null);
-            setView('setup');
-          }
-        }
-      } catch (error) {
-        console.error("Auth state change error:", error);
-      } finally {
-        setIsAuthReady(true);
+        const parsed = JSON.parse(savedPlayer);
+        setPlayer(parsed);
+        setView('home');
+      } catch (e) {
+        setPlayer(null);
+        setView('setup');
       }
-    });
-    return () => unsubscribe();
+    } else {
+      setPlayer(null);
+      setView('setup');
+    }
+    setIsAuthReady(true);
   }, []);
 
   const handleToggleFavorite = async (packId: string) => {
@@ -350,21 +354,7 @@ export default function App() {
     const updatedPlayer = { ...player, favorites: newFavorites };
     setPlayer(updatedPlayer);
     playSound('click');
-
-    // Persist to Firestore if logged in, otherwise localStorage
-    if (auth.currentUser) {
-      try {
-        await setDoc(doc(db, 'users', player.id), {
-          favorites: newFavorites,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      } catch (error) {
-        console.error("Error saving favorites:", error);
-        handleFirestoreError(error, OperationType.WRITE, `users/${player.id}`);
-      }
-    } else {
-      localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
-    }
+    localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
   };
 
   const handleSaveWrongQuestions = async (newWrongWords: Word[]) => {
@@ -383,20 +373,7 @@ export default function App() {
 
     const updatedPlayer = { ...player, wrongQuestions: unique };
     setPlayer(updatedPlayer);
-    
-    // Persist
-    if (auth.currentUser) {
-      try {
-        await setDoc(doc(db, 'users', player.id), {
-          wrongQuestions: unique,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      } catch (error) {
-        console.error("Error saving wrong questions:", error);
-      }
-    } else {
-      localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
-    }
+    localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
   };
 
   useEffect(() => {
@@ -717,7 +694,7 @@ export default function App() {
 
   const handleSetup = (name: string, iconId: string) => {
     const newPlayer: Player = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: `user_${Math.random().toString(36).substr(2, 9)}`,
       name,
       icon: iconId,
       favorites: [],
@@ -764,15 +741,10 @@ export default function App() {
     setIsLoading(false);
   };
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      localStorage.removeItem('pokepoke_player');
-      setPlayer(null);
-      setView('setup');
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
+  const handleLogout = () => {
+    localStorage.removeItem('pokepoke_player');
+    setPlayer(null);
+    setView('setup');
   };
 
   const handleQuit = () => {
@@ -953,23 +925,7 @@ export default function App() {
                 setView('friend_match_setup');
               }}
               onToggleFavorite={handleToggleFavorite}
-              onFirebaseDemo={() => {
-                playSound('click');
-                setView('firebase_demo');
-              }}
             />
-          )}
-          {view === 'firebase_demo' && (
-            <div className="p-6">
-              <button 
-                onClick={() => setView('home')}
-                className="mb-6 flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold text-sm transition-colors"
-              >
-                <ChevronLeft className="w-5 h-5" />
-                Back to Home
-              </button>
-              <FirebaseDemo />
-            </div>
           )}
           {view === 'suggestion' && (
             <SuggestionFormView 
@@ -1673,13 +1629,12 @@ function QuizView({
   );
 }
 
-function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onToggleFavorite, onFirebaseDemo }: { 
+function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onToggleFavorite }: { 
   player: Player | null, 
   onSelectPack: (pack: Pack) => void, 
   onWrongQuestions: () => void,
   onFriendMatch: () => void,
-  onToggleFavorite: (packId: string) => void,
-  onFirebaseDemo: () => void
+  onToggleFavorite: (packId: string) => void
 }) {
   const [activeTab, setActiveTab] = useState<'vocabulary' | 'listening'>('vocabulary');
   const favorites = player?.favorites || [];
@@ -1723,15 +1678,8 @@ function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onTog
 
   return (
     <div className="p-6 pb-24">
-      <div className="mb-8 text-center flex flex-col items-center gap-4">
+      <div className="mb-8 text-center">
         <h1 className="text-xs font-black text-slate-400 uppercase tracking-widest">SELECT A PACK TO START</h1>
-        <button 
-          onClick={onFirebaseDemo}
-          className="px-4 py-2 bg-blue-50 text-blue-600 rounded-full text-xs font-bold hover:bg-blue-100 transition-colors flex items-center gap-2"
-        >
-          <Zap className="w-3 h-3" />
-          Firebase Demo
-        </button>
       </div>
 
       {/* Tab Switcher */}
@@ -2479,7 +2427,6 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
 
   const opponent = matchState?.players?.find(p => p.id !== player?.id);
   const [isCopied, setIsCopied] = useState(false);
-  const [isSharing, setIsSharing] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
   const handleSaveWrong = () => {
@@ -2503,9 +2450,6 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   };
 
   const handleShare = async () => {
-    if (isSharing) return;
-    setIsSharing(true);
-    
     const wrongWords = answerHistory.filter(item => item.status === 'wrong').map(item => `・${item.word} (${item.meaning})`);
     const lostWords = answerHistory.filter(item => item.status === 'lost').map(item => `・${item.word} (${item.meaning})`);
 
@@ -2523,21 +2467,23 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
       shareText += `全問正解！完璧です！✨\n`;
     }
 
-    try {
-      if (navigator.share) {
+    if (navigator.share) {
+      try {
         await navigator.share({
           title: '激アツ英単語 復習リスト',
           text: shareText,
         });
-      } else {
+      } catch (err) {
+        console.error('Share failed:', err);
+      }
+    } else {
+      try {
         await navigator.clipboard.writeText(shareText);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
+      } catch (err) {
+        console.error('Clipboard failed:', err);
       }
-    } catch (err) {
-      console.error('Share failed:', err);
-    } finally {
-      setIsSharing(false);
     }
   };
 
@@ -2792,41 +2738,6 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
 }) {
   const [name, setName] = useState('');
   const [selectedIcon, setSelectedIcon] = useState('smile');
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-
-  const handleGoogleLogin = async () => {
-    try {
-      setIsLoggingIn(true);
-      setAuthError(null);
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      console.error('Google login error:', error);
-      if (error.code === 'auth/popup-closed-by-user') {
-        setAuthError('ログイン画面が閉じられました。もう一度お試しください。');
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        setAuthError('別のログインリクエストが進行中です。');
-      } else if (error.code === 'auth/popup-blocked') {
-        setAuthError('ポップアップがブロックされました。ブラウザの設定で許可してください。または、下の「リダイレクトでログイン」をお試しください。');
-      } else {
-        setAuthError(`ログインに失敗しました: ${error.message}`);
-      }
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleGoogleLoginRedirect = async () => {
-    try {
-      setIsLoggingIn(true);
-      setAuthError(null);
-      await signInWithRedirect(auth, googleProvider);
-    } catch (error: any) {
-      console.error('Google redirect login error:', error);
-      setAuthError(`ログインに失敗しました: ${error.message}`);
-      setIsLoggingIn(false);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 relative overflow-hidden">
@@ -2870,60 +2781,17 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
             Hot & Exciting!
           </motion.div>
           <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none mb-2">激アツ英単語</h1>
-          <p className="text-slate-500 font-bold">ログインして始めよう！</p>
+          <p className="text-slate-500 font-bold">名前を入力して始めよう！</p>
         </div>
         
         <div className="space-y-4">
-          {authError && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-xs font-bold"
-            >
-              {authError}
-            </motion.div>
-          )}
-          <div className="grid grid-cols-1 gap-3">
-            <button
-              onClick={handleGoogleLogin}
-              disabled={isLoggingIn}
-              className="w-full py-3 bg-white border-2 border-slate-100 rounded-2xl font-black text-base flex items-center justify-center gap-3 hover:bg-slate-50 transition-all active:scale-95 shadow-sm disabled:opacity-50"
-            >
-              {isLoggingIn ? (
-                <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-              ) : (
-                <LogIn className="w-5 h-5 text-indigo-600" />
-              )}
-              {isLoggingIn ? 'ログイン中...' : 'Googleでログイン'}
-            </button>
-
-            {authError?.includes('ポップアップ') && (
-              <div className="grid grid-cols-1 gap-2">
-                <button
-                  onClick={handleGoogleLoginRedirect}
-                  disabled={isLoggingIn}
-                  className="w-full py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-[10px] text-slate-600 flex items-center justify-center gap-1 hover:bg-slate-100 transition-all"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  Googleリダイレクト
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="relative flex items-center py-2">
-            <div className="flex-grow border-t border-slate-100"></div>
-            <span className="flex-shrink mx-4 text-slate-300 text-xs font-bold uppercase tracking-widest">OR</span>
-            <div className="flex-grow border-t border-slate-100"></div>
-          </div>
-
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">ゲストとして名前を入力</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">プレイヤー名を入力</label>
             <input 
               type="text" 
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="プレイヤー名を入力"
+              placeholder="名前を入力"
               className="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all font-bold"
             />
           </div>
@@ -2950,7 +2818,7 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
             onClick={() => onComplete(name, selectedIcon)}
             className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-lg shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:shadow-none transition-all active:scale-95"
           >
-            ゲストでスタート！
+            スタート！
           </button>
         </div>
       </motion.div>
