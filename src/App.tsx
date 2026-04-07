@@ -63,6 +63,7 @@ export default function App() {
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   const stopAudio = () => {
+    setIsAudioPlaying(false);
     if (audioSourceRef.current) {
       try {
         audioSourceRef.current.stop();
@@ -175,7 +176,7 @@ export default function App() {
   };
 
   const playAudio = async (text: string) => {
-    if (isMuted) return;
+    if (isMuted || answerStatus !== 'idle') return;
     
     stopAudio();
 
@@ -221,7 +222,7 @@ export default function App() {
   // --- Stop Audio on view or question change ---
   useEffect(() => {
     stopAudio();
-  }, [view, currentIndex]);
+  }, [view, currentIndex, answerStatus]);
 
   // --- Scroll to top on view change ---
   useEffect(() => {
@@ -627,6 +628,7 @@ export default function App() {
   const handleAnswer = async (choice: string | null) => {
     if (answerStatus !== 'idle') return;
     
+    stopAudio();
     const currentWord = quizQuestions[currentIndex];
     const isCorrect = choice === currentWord.meaning;
     
