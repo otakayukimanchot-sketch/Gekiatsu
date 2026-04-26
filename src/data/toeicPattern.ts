@@ -48,7 +48,7 @@ export const TOEIC_PATTERN_WORDS: Word[] = [
   },
   {
     "word": "going",
-    "meaning": "前置詞（on）＋ ＿＿ → 名詞/動名詞",
+    "meaning": "前置詞（on）＋ ＿＿ → 名詞、動名詞",
     "choices": ["going", "go", "gone", "goer"]
   },
   {

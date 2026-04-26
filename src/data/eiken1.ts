@@ -284,7 +284,7 @@ export const EIKEN1_WORDS: Word[] = [
   { word: 'garrulous', meaning: 'おしゃべりな', choices: ['おしゃべりな', '無口な', '厳粛な', '計画的な'] },
   { word: 'genial', meaning: '愛想の良い', choices: ['愛想の良い', '厳格な', '危険な', '頑固な'] },
   { word: 'grandiose', meaning: '壮大な', choices: ['壮大な', '微細な', '適度な', '怠惰な'] },
-  { word: 'gratuitous', meaning: '無料の/不必要な', choices: ['無料の/不必要な', '高価な', '必須の', '希少な'] },
+  { word: 'gratuitous', meaning: '無料の、不必要な', choices: ['無料の、不必要な', '高価な', '必須の', '希少な'] },
   { word: 'gregarious', meaning: '社交的な', choices: ['社交的な', '内向的な', '攻撃的な', '稀有な'] },
   { word: 'guile', meaning: '狡猾', choices: ['狡猾', '純粋', '遅延', '独創'] },
   { word: 'gullible', meaning: 'だまされやすい', choices: ['だまされやすい', '疑い深い', '堅実な', '攻撃的な'] },

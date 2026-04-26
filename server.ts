@@ -41,10 +41,10 @@ async function startServer() {
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: corsOptions,
-    pingInterval: 25000,
-    pingTimeout: 20000,
+    pingInterval: 10000,
+    pingTimeout: 30000,
     allowEIO3: true,
-    transports: ['websocket', 'polling']
+    transports: ['polling', 'websocket']
   });
 
   // Health check routes

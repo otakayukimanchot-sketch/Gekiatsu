@@ -768,8 +768,8 @@ export const ENGLISH_TRIVIA_WORDS: Word[] = [
   },
   {
     "word": "Q. 英語で最も長い、アナグラム（文字の入れ替え）のペアとして知られている単語のペアは何でしょう？ (19文字)",
-    "meaning": "cinematographer / megachiropteran",
-    "choices": ["cinematographer / megachiropteran", "declarations / consolidating", "conversationalists / vocalisation", "representation / interpretation"]
+    "meaning": "cinematographer と megachiropteran",
+    "choices": ["cinematographer と megachiropteran", "declarations と consolidating", "conversationalists と vocalisation", "representation と interpretation"]
   },
   {
     "word": "Q. 英語の \"window\" という単語は、古ノルド語の「風の目」という意味の言葉が語源です。その古ノルド語とは？",

@@ -9,7 +9,7 @@ import {
   Play, Settings, Info, ChevronRight, ChevronLeft,
   LogOut, MessageSquare, Send, Volume2, VolumeX,
   LogIn, QrCode, Scan, X, Copy, Check, Star, Share2, ExternalLink, Github,
-  BookOpen, Headphones
+  BookOpen, Headphones, Moon, Sun
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
@@ -58,12 +58,16 @@ export default function App() {
   const [listeningCountdown, setListeningCountdown] = useState<number | null>(null);
   const [audioPlayed, setAudioPlayed] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const isPlayingAudioRef = useRef(false);
+  const fetchInProgressRef = useRef(false);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   const stopAudio = () => {
     setIsAudioPlaying(false);
+    isPlayingAudioRef.current = false;
+    fetchInProgressRef.current = false;
     if (audioSourceRef.current) {
       try {
         audioSourceRef.current.stop();
@@ -82,8 +86,8 @@ export default function App() {
 
   const playPcmAudio = (base64Data: string, sampleRate: number = 24000) => {
     try {
-      stopAudio();
       setIsAudioPlaying(true);
+      isPlayingAudioRef.current = true;
 
       const binaryString = atob(base64Data);
       const len = binaryString.length;
@@ -118,6 +122,7 @@ export default function App() {
           audioSourceRef.current = null;
         }
         setIsAudioPlaying(false);
+        isPlayingAudioRef.current = false;
       };
     } catch (e) {
       console.error("Error playing PCM audio:", e);
@@ -134,7 +139,12 @@ export default function App() {
   const [answerStatus, setAnswerStatus] = useState<'idle' | 'correct' | 'wrong' | 'timeout' | 'opponent_won'>('idle');
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMusicMuted, setIsMusicMuted] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('pokepoke_dark_mode');
+    if (saved !== null) return saved === 'true';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
   const [isAutoSpeechEnabled, setIsAutoSpeechEnabled] = useState<boolean>(() => {
     return localStorage.getItem('pokepoke_auto_speech') !== 'false'; // Default to true
   });
@@ -176,9 +186,12 @@ export default function App() {
   };
 
   const playAudio = async (text: string) => {
-    if (isMuted || answerStatus !== 'idle') return;
+    if (answerStatus !== 'idle' || fetchInProgressRef.current) return;
     
     stopAudio();
+    setIsAudioPlaying(true);
+    isPlayingAudioRef.current = true;
+    fetchInProgressRef.current = true;
 
     try {
       // Use Gemini TTS for high quality and gender selection
@@ -199,6 +212,8 @@ export default function App() {
         },
       });
 
+      if (!fetchInProgressRef.current) return;
+
       const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (base64Audio) {
         playPcmAudio(base64Audio);
@@ -207,15 +222,24 @@ export default function App() {
         throw new Error("No audio data in response");
       }
     } catch (error) {
+      if (!fetchInProgressRef.current) return;
       console.warn("Gemini TTS failed, falling back to window.speechSynthesis:", error);
-      setIsAudioPlaying(true);
+      
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'en-US';
       utterance.rate = 0.9; // Slightly slower for clarity
-      utterance.onend = () => setIsAudioPlaying(false);
-      utterance.onerror = () => setIsAudioPlaying(false);
+      utterance.onend = () => {
+        setIsAudioPlaying(false);
+        isPlayingAudioRef.current = false;
+      };
+      utterance.onerror = () => {
+        setIsAudioPlaying(false);
+        isPlayingAudioRef.current = false;
+      };
       window.speechSynthesis.speak(utterance);
       setAudioPlayed(true);
+    } finally {
+      fetchInProgressRef.current = false;
     }
   };
 
@@ -254,7 +278,7 @@ export default function App() {
   useEffect(() => {
     const handleInteraction = () => {
       setHasInteracted(true);
-      if (bgmRef.current && !isMuted) {
+      if (bgmRef.current && !isMusicMuted) {
         bgmRef.current.play().catch(() => {});
       }
       window.removeEventListener('click', handleInteraction);
@@ -289,16 +313,25 @@ export default function App() {
     }
 
     // Play/Pause logic
-    if (hasInteracted && !isMuted && !showSplash && !isListeningQuiz) {
+    if (hasInteracted && !isMusicMuted && !showSplash && !isListeningQuiz) {
       console.log('Attempting to play BGM:', targetUrl);
       bgmRef.current.play().catch((err) => {
         console.warn("BGM play failed:", err);
       });
     } else {
-      console.log('Pausing BGM. hasInteracted:', hasInteracted, 'isMuted:', isMuted, 'showSplash:', showSplash, 'isListeningQuiz:', isListeningQuiz);
+      console.log('Pausing BGM. hasInteracted:', hasInteracted, 'isMusicMuted:', isMusicMuted, 'showSplash:', showSplash, 'isListeningQuiz:', isListeningQuiz);
       bgmRef.current.pause();
     }
-  }, [isMuted, view, hasInteracted, showSplash, selectedPack]);
+  }, [isMusicMuted, view, hasInteracted, showSplash, selectedPack]);
+
+  useEffect(() => {
+    localStorage.setItem('pokepoke_dark_mode', isDarkMode.toString());
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
 
   // --- Player Setup ---
   useEffect(() => {
@@ -356,7 +389,7 @@ export default function App() {
   useEffect(() => {
     if (view !== 'training' && view !== 'battle') return;
     if (answerStatus !== 'idle') return;
-    if (selectedPack?.type === 'listening' && (listeningCountdown !== null || isAudioPlaying)) return;
+    if (selectedPack?.type === 'listening' && (listeningCountdown !== null || isAudioPlaying || isPlayingAudioRef.current)) return;
 
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
@@ -423,14 +456,14 @@ export default function App() {
     console.log('Initializing socket connection to:', socketUrl);
     
     socketRef.current = io(socketUrl, {
-      // Use websocket first, then fallback to polling. 
-      // This is more stable in environments with proxies like AI Studio.
-      transports: ['websocket', 'polling'],
+      // Use polling first, then upgrade to websocket.
+      // This is generally more reliable in standard web environments and proxies.
+      transports: ['polling', 'websocket'],
       withCredentials: true,
-      reconnectionAttempts: 20,
+      reconnectionAttempts: 30, // Increased
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 60000 // 60 seconds timeout
+      timeout: 90000 // Increased to 90 seconds
     });
     
     socketRef.current.on('connect', () => {
@@ -621,7 +654,7 @@ export default function App() {
       }
     } else {
       setView('result');
-      if (score > (quizQuestions.length / 2)) confetti();
+      if (score > (quizQuestions.length / 2)) confetti({ particleCount: 20, spread: 50, origin: { y: 0.8 } });
     }
   };
 
@@ -781,7 +814,7 @@ export default function App() {
   };
 
   // --- Views ---
-  if (showSplash) return <SplashView progress={loadProgress} />;
+  if (showSplash) return <SplashView progress={loadProgress} isDarkMode={isDarkMode} />;
   
   if (!isAuthReady) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white">
@@ -793,8 +826,10 @@ export default function App() {
   if (view === 'setup') return (
     <SetupView 
       onComplete={handleSetup} 
-      isMuted={isMuted} 
-      onToggleMute={() => setIsMuted(!isMuted)}
+      isMusicMuted={isMusicMuted} 
+      onToggleMute={() => setIsMusicMuted(!isMusicMuted)}
+      isDarkMode={isDarkMode}
+      onToggleTheme={() => setIsDarkMode(!isDarkMode)}
       isOnline={isOnline}
       connectionError={connectionError}
       onReconnect={reconnectSocket}
@@ -811,7 +846,7 @@ export default function App() {
   );
   
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative">
+    <div className={`min-h-screen transition-colors duration-300 flex flex-col font-sans relative ${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-red-600 text-white text-[10px] font-black py-1.5 px-4 text-center z-50 flex items-center justify-center gap-2 sticky top-0">
@@ -827,63 +862,55 @@ export default function App() {
       )}
 
       {/* Header */}
-      <header className="p-4 flex justify-between items-center bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+      <header className={`p-4 flex justify-between items-center border-b sticky top-0 z-10 shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900/80 border-slate-800 backdrop-blur-md' : 'bg-white border-slate-200'}`}>
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center border border-indigo-100">
             {player && React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: "w-6 h-6 text-indigo-600" })}
           </div>
           <div>
-            <h2 className="text-sm font-black text-slate-900 tracking-tighter uppercase leading-none">{player?.name}</h2>
+            <h2 className={`text-sm font-black tracking-tighter uppercase leading-none ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{player?.name}</h2>
             <div className="flex items-center gap-1 mt-0.5">
               <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
               <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
                 {isOnline ? 'Online' : 'Offline'}
               </p>
             </div>
-            {!isOnline && (
-              <p className="text-[6px] text-red-400 font-bold uppercase tracking-tighter mt-0.5">
-                Server Connection Failed
-              </p>
-            )}
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4">
           <button 
             onClick={() => setView('tutorial')}
-            className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+            className={`p-2 transition-colors ${isDarkMode ? 'text-slate-500 hover:text-indigo-400' : 'text-slate-400 hover:text-indigo-600'}`}
             title="How to Use"
           >
             <Info className="w-5 h-5" />
           </button>
-          {(view === 'training' || view === 'battle') && (
-            <button 
-              onClick={handleQuit}
-              className="flex items-center gap-1 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-black text-xs hover:bg-red-100 transition-all border border-red-100"
-            >
-              <XCircle className="w-4 h-4" />
-              <span>中断</span>
-            </button>
-          )}
+          
           <button 
-            onClick={() => setIsMuted(!isMuted)}
-            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'bg-slate-800 text-yellow-500' : 'hover:bg-slate-100 text-slate-400'}`}
           >
-            {isMuted ? <VolumeX className="w-5 h-5 text-slate-400" /> : <Volume2 className="w-5 h-5 text-indigo-600" />}
+            {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
-          <div className="flex flex-col items-end">
-             <div className="flex gap-0.5">
-               {[1,2,3,4].map(i => (
-                 <div key={i} className={`w-1 h-3 rounded-full ${isOnline && i <= 3 ? 'bg-emerald-500' : 'bg-slate-200'}`}></div>
-               ))}
-             </div>
-             <p className="text-[8px] font-black text-slate-400 mt-0.5">PING: 24MS</p>
+
+          <button 
+            onClick={() => setIsMusicMuted(!isMusicMuted)}
+            className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'bg-slate-800' : 'hover:bg-slate-100'}`}
+          >
+            {isMusicMuted ? <VolumeX className="w-5 h-5 text-slate-400" /> : <Volume2 className="w-5 h-5 text-indigo-600" />}
+          </button>
+          <div className={`flex items-center gap-2 p-2 rounded-lg transition-colors ${isDarkMode ? 'bg-slate-900/50' : 'bg-slate-50'}`}>
+            {isOnline ? (
+              <Wifi className="w-4 h-4 text-emerald-500" />
+            ) : (
+              <WifiOff className="w-4 h-4 text-red-500" />
+            )}
+            <div className="flex gap-0.5 items-end h-3">
+              {[1,2,3,4].map(i => (
+                <div key={i} className={`w-1 rounded-full transition-all ${isOnline && i <= 3 ? 'bg-emerald-500 h-full' : 'bg-slate-300 h-1/2'}`}></div>
+              ))}
+            </div>
           </div>
-          <button 
-            onClick={handleLogout}
-            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <LogOut className="w-5 h-5 text-slate-400" />
-          </button>
         </div>
       </header>
 
@@ -892,6 +919,7 @@ export default function App() {
           {view === 'home' && (
             <HomeView 
               player={player}
+              isDarkMode={isDarkMode}
               onSelectPack={(pack) => { 
                 playSound('click');
                 setSelectedPack(pack); 
@@ -914,6 +942,7 @@ export default function App() {
           {view === 'training_config' && (
             <TrainingConfigView 
               pack={selectedPack!} 
+              isDarkMode={isDarkMode}
               onStartTraining={startTraining}
               onStartBattle={(count) => {
                 setQuestionCount(count);
@@ -925,6 +954,7 @@ export default function App() {
           )}
           {view === 'matching' && (
             <MatchingView 
+              isDarkMode={isDarkMode}
               onCancel={() => {
                 socketRef.current?.emit('cancel_match');
                 setView('home');
@@ -935,6 +965,7 @@ export default function App() {
           {view === 'friend_match_setup' && (
             <FriendMatchSetupView 
               pack={selectedPack}
+              isDarkMode={isDarkMode}
               onBack={() => setView('home')}
               onSelectPack={(p) => setSelectedPack(p)}
               onCreateMatch={(count) => {
@@ -947,6 +978,7 @@ export default function App() {
           {view === 'friend_match_waiting' && (
             <FriendMatchWaitingView 
               inviteCode={inviteCode!}
+              isDarkMode={isDarkMode}
               onCancel={() => setView('home')}
               matchState={matchState}
               player={player}
@@ -955,6 +987,7 @@ export default function App() {
           )}
           {view === 'friend_match_join' && (
             <FriendMatchJoinView 
+              isDarkMode={isDarkMode}
               onBack={() => setView('home')}
               onJoin={(code) => {
                 socketRef.current?.emit('join_friend_match', { inviteCode: code, player });
@@ -964,6 +997,7 @@ export default function App() {
           {view === 'battle_start' && (
             <BattleStartView 
               player={player!} 
+              isDarkMode={isDarkMode}
               opponent={matchState?.players?.find(p => p.id !== player?.id)!} 
               countdown={countdown}
               onReady={() => socketRef.current?.emit('player_ready', { roomId: matchState?.roomId })}
@@ -974,6 +1008,7 @@ export default function App() {
             <QuizView 
               mode={view}
               isLoading={isLoading}
+              isDarkMode={isDarkMode}
               currentIndex={currentIndex}
               total={quizQuestions.length}
               question={quizQuestions[currentIndex]}
@@ -1031,6 +1066,7 @@ export default function App() {
               onRematch={() => socketRef.current?.emit('request_rematch', { roomId: matchState?.roomId })}
               matchState={matchState}
               player={player}
+              isDarkMode={isDarkMode}
             />
           )}
         </AnimatePresence>
@@ -1041,19 +1077,19 @@ export default function App() {
 
 // --- Sub-components ---
 
-function SplashView({ progress }: { progress: number }) {
+function SplashView({ progress, isDarkMode }: { progress: number, isDarkMode: boolean }) {
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6">
+    <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8 }}
         className="text-center"
       >
-        <h1 className="text-6xl md:text-8xl font-black text-slate-900 tracking-tighter italic mb-12">
+        <h1 className={`text-6xl md:text-8xl font-black tracking-tighter italic mb-12 transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
           激アツ英単語
         </h1>
-        <div className="w-64 md:w-96 h-2 bg-slate-100 rounded-full overflow-hidden relative">
+        <div className={`w-64 md:w-96 h-2 rounded-full overflow-hidden relative transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-slate-100'}`}>
           <motion.div 
             className="absolute inset-0 bg-indigo-600"
             initial={{ width: 0 }}
@@ -1068,7 +1104,7 @@ function SplashView({ progress }: { progress: number }) {
   );
 }
 
-function BattleStartView({ player, opponent, countdown, onReady, matchState }: { player: Player, opponent: Player, countdown: number | null, onReady: () => void, matchState: MatchRoomState | null }) {
+function BattleStartView({ player, opponent, countdown, isDarkMode, onReady, matchState }: { player: Player, opponent: Player, countdown: number | null, isDarkMode: boolean, onReady: () => void, matchState: MatchRoomState | null }) {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
@@ -1084,7 +1120,7 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="min-h-[80vh] flex flex-col items-center justify-center p-6 bg-indigo-900 overflow-hidden"
+      className={`min-h-[80vh] flex flex-col items-center justify-center p-6 overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-indigo-900'}`}
     >
       <AnimatePresence mode="wait">
         {matchState?.phase === 'loading' ? (
@@ -1094,7 +1130,7 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
             animate={{ opacity: 1 }}
             className="flex flex-col items-center"
           >
-            <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-6"></div>
+            <div className={`w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mb-6 ${isDarkMode ? 'border-indigo-500' : 'border-indigo-300'}`}></div>
             <p className="text-white font-black text-2xl uppercase tracking-widest italic">Extracting Questions...</p>
           </motion.div>
         ) : countdown !== null ? (
@@ -1119,7 +1155,7 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
               </h2>
               <div className="h-1 w-24 bg-indigo-500 mx-auto rounded-full mb-4"></div>
               {matchState?.type === 'friend' && matchState.inviteCode && (
-                <div className="bg-white/10 backdrop-blur-md px-6 py-4 rounded-3xl border border-white/20 inline-flex flex-col items-center gap-1">
+                <div className={`backdrop-blur-md px-6 py-4 rounded-3xl border transition-colors ${isDarkMode ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-white/10 border-white/20'} inline-flex flex-col items-center gap-1`}>
                   <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Invite Code</p>
                   <p className="text-4xl font-black text-white tracking-[0.2em] leading-none">{matchState.inviteCode}</p>
                 </div>
@@ -1133,8 +1169,8 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
                 transition={{ type: "spring", delay: 0.2 }}
                 className="flex flex-col items-center gap-4"
               >
-                <div className="w-28 h-28 rounded-[2rem] bg-white flex items-center justify-center shadow-2xl relative overflow-hidden group">
-                  <div className="absolute inset-0 bg-indigo-50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className={`w-28 h-28 rounded-[2rem] flex items-center justify-center shadow-2xl relative overflow-hidden group transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}>
+                  <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity ${isDarkMode ? 'bg-indigo-900/20' : 'bg-indigo-50'}`}></div>
                   {React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: "w-14 h-14 text-indigo-600 relative z-10" })}
                 </div>
                 <div className="flex flex-col items-center">
@@ -1163,8 +1199,8 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
                 transition={{ type: "spring", delay: 0.4 }}
                 className="flex flex-col items-center gap-4"
               >
-                <div className="w-28 h-28 rounded-[2rem] bg-white flex items-center justify-center shadow-2xl relative overflow-hidden group">
-                  <div className="absolute inset-0 bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className={`w-28 h-28 rounded-[2rem] flex items-center justify-center shadow-2xl relative overflow-hidden group transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}>
+                  <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity ${isDarkMode ? 'bg-red-900/20' : 'bg-red-50'}`}></div>
                   {React.createElement(PLAYER_ICONS.find(i => i.id === opponent.icon)?.icon || Smile, { className: "w-14 h-14 text-red-600 relative z-10" })}
                 </div>
                 <div className="flex flex-col items-center">
@@ -1194,12 +1230,12 @@ function BattleStartView({ player, opponent, countdown, onReady, matchState }: {
 }
 
 function QuizView({ 
-  mode, isLoading, currentIndex, total, question, timeLeft, 
+  mode, isLoading, isDarkMode, currentIndex, total, question, timeLeft, 
   answerStatus, selectedChoice, onAnswer, opponent, opponentAnswer,
   player, score, opponentScore, matchState, listeningCountdown, selectedPack,
   isAutoSpeechEnabled, onToggleAutoSpeech, playAudio
 }: { 
-  mode: 'training' | 'battle', isLoading: boolean, currentIndex: number, total: number, 
+  mode: 'training' | 'battle', isLoading: boolean, isDarkMode: boolean, currentIndex: number, total: number, 
   question: Word, timeLeft: number, answerStatus: string, 
   selectedChoice: string | null, onAnswer: (choice: string | null) => void,
   opponent?: Player, opponentAnswer?: any,
@@ -1268,14 +1304,14 @@ function QuizView({
       <div className="flex justify-between items-center mb-4 md:mb-6">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <div className="w-14 h-14 rounded-2xl border-4 border-indigo-100 flex items-center justify-center font-black text-2xl text-indigo-600 bg-white shadow-sm">
+            <div className={`w-14 h-14 rounded-2xl border-4 flex items-center justify-center font-black text-2xl shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800 text-indigo-400' : 'bg-white border-indigo-100 text-indigo-600'}`}>
               {timeLeft}
             </div>
             <svg className="absolute -inset-1 w-16 h-16 -rotate-90 pointer-events-none">
               <circle
                 cx="32" cy="32" r="30"
                 fill="none" stroke="currentColor" strokeWidth="4"
-                className="text-slate-100"
+                className={isDarkMode ? 'text-slate-800' : 'text-slate-100'}
               />
               <motion.circle
                 cx="32" cy="32" r="30"
@@ -1300,8 +1336,8 @@ function QuizView({
               onClick={onToggleAutoSpeech}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 transition-all ${
                 isAutoSpeechEnabled 
-                  ? 'bg-indigo-50 border-indigo-200 text-indigo-600' 
-                  : 'bg-slate-50 border-slate-200 text-slate-400'
+                  ? (isDarkMode ? 'bg-indigo-950 border-indigo-900 text-indigo-400' : 'bg-indigo-50 border-indigo-200 text-indigo-600')
+                  : (isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-500' : 'bg-slate-50 border-slate-200 text-slate-400')
               }`}
             >
               {isAutoSpeechEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
@@ -1309,7 +1345,7 @@ function QuizView({
                 音声{isAutoSpeechEnabled ? 'オン' : 'オフ'}
               </span>
             </button>
-            <p className="text-2xl font-black text-slate-900 tracking-tighter">
+            <p className={`text-2xl font-black tracking-tighter transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
               {currentIndex + 1} <span className="text-slate-300 mx-1">/</span> {total}
             </p>
           </div>
@@ -1320,33 +1356,33 @@ function QuizView({
         <div className="flex flex-col gap-2 mb-4">
           <div className="flex justify-between items-center px-2">
             <div className="flex items-center gap-2">
-               <div className="w-8 h-8 rounded-xl bg-indigo-100 flex items-center justify-center border border-indigo-200">
+               <div className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-colors ${isDarkMode ? 'bg-indigo-950 border-indigo-900' : 'bg-indigo-100 border-indigo-200'}`}>
                  {player && React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: "w-5 h-5 text-indigo-600" })}
                </div>
                <div>
                  <p className="text-[10px] font-black text-slate-400 uppercase leading-none mb-0.5">YOU</p>
-                 <p className="text-lg font-black text-slate-900 leading-none">{score}</p>
+                 <p className={`text-lg font-black leading-none transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{score}</p>
                </div>
             </div>
             
             <div className="flex flex-col items-center">
               <div className="text-[10px] font-black text-slate-300 uppercase italic">VS</div>
-              <div className="w-1 h-4 bg-slate-100 rounded-full"></div>
+              <div className={`w-1 h-4 rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}></div>
             </div>
 
             <div className="flex items-center gap-2 text-right">
                <div>
                  <p className="text-[10px] font-black text-slate-400 uppercase leading-none mb-0.5">{opponent.name}</p>
-                 <p className="text-lg font-black text-slate-900 leading-none">{opponentScore}</p>
+                 <p className={`text-lg font-black leading-none transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{opponentScore}</p>
                </div>
-               <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center border border-red-200">
+               <div className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-colors ${isDarkMode ? 'bg-red-950 border-red-900' : 'bg-red-100 border-red-200'}`}>
                  {React.createElement(PLAYER_ICONS.find(i => i.id === opponent.icon)?.icon || Smile, { className: "w-5 h-5 text-red-600" })}
                </div>
             </div>
           </div>
           
           {/* Progress Bar */}
-          <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden flex">
+          <div className={`h-1.5 w-full rounded-full overflow-hidden flex transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-slate-100'}`}>
             <motion.div 
               initial={{ width: 0 }}
               animate={{ width: `${(score / total) * 100}%` }}
@@ -1363,19 +1399,19 @@ function QuizView({
           {/* Opponent Status Indicator */}
           <div className="flex justify-end">
             {matchState?.phase === 'answering' ? (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-50 rounded-full border border-emerald-100">
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-colors ${isDarkMode ? 'bg-emerald-950/50 border-emerald-900' : 'bg-emerald-50 border-emerald-100'}`}>
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-[8px] font-black text-emerald-600 uppercase">
+                <span className={`text-[8px] font-black uppercase ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
                   {matchState?.players?.find(p => p.lastAnswer?.questionIndex === currentIndex)?.name} Answered!
                 </span>
               </div>
             ) : opponentAnswer && opponentAnswer.questionIndex === currentIndex ? (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-50 rounded-full border border-emerald-100">
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-colors ${isDarkMode ? 'bg-emerald-950/50 border-emerald-900' : 'bg-emerald-50 border-emerald-100'}`}>
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-[8px] font-black text-emerald-600 uppercase">Opponent Answered</span>
+                <span className={`text-[8px] font-black uppercase ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>Opponent Answered</span>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-slate-50 rounded-full border border-slate-100">
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
                 <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
                 <span className="text-[8px] font-black text-slate-400 uppercase">Opponent Thinking...</span>
               </div>
@@ -1388,7 +1424,7 @@ function QuizView({
         key={currentIndex}
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        className="bg-white rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-12 shadow-2xl border border-slate-100 mb-4 md:mb-8 text-center relative overflow-hidden card-pack-shadow flex items-center justify-center min-h-[140px] md:min-h-[200px]"
+        className={`rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-12 shadow-2xl border mb-4 md:mb-8 text-center relative overflow-hidden card-pack-shadow flex items-center justify-center min-h-[140px] md:min-h-[200px] transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}
       >
         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
         <div className="w-full">
@@ -1406,7 +1442,7 @@ function QuizView({
               <motion.div
                 animate={{ scale: [1, 1.1, 1] }}
                 transition={{ repeat: Infinity, duration: 1.5 }}
-                className="w-20 h-20 rounded-full bg-indigo-50 flex items-center justify-center border-4 border-indigo-100"
+                className={`w-20 h-20 rounded-full flex items-center justify-center border-4 transition-colors ${isDarkMode ? 'bg-indigo-950 border-indigo-900' : 'bg-indigo-50 border-indigo-100'}`}
               >
                 <Volume2 className="w-10 h-10 text-indigo-600" />
               </motion.div>
@@ -1414,7 +1450,7 @@ function QuizView({
             </div>
           ) : (
             <>
-              <h3 className={`${getFontSize(question.word)} font-black text-slate-900 mb-4 tracking-tight break-words`}>
+              <h3 className={`${getFontSize(question.word)} font-black mb-4 tracking-tight break-words transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
                 {question.word}
               </h3>
               <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">Select the correct meaning</p>
@@ -1429,28 +1465,28 @@ function QuizView({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="fixed inset-0 flex items-center justify-center bg-white/95 backdrop-blur-xl z-[100]"
+              transition={{ duration: 0.1 }}
+              className={`fixed inset-0 flex items-center justify-center z-[100] transition-colors ${isDarkMode ? 'bg-slate-950/95' : 'bg-white/90'}`}
             >
               <motion.div
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: "spring", damping: 20, stiffness: 300 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
                 className="flex flex-col items-center w-full px-6"
               >
                 {matchState?.phase === 'result' ? (
                   <div className="space-y-6 w-full max-w-md">
-                    <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tighter mb-4">Round Results</h4>
+                    <h4 className={`text-2xl font-black uppercase tracking-tighter mb-4 transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Round Results</h4>
                     <div className="space-y-3">
                       {matchState.players.map(p => (
-                        <div key={p.id} className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <div key={p.id} className={`flex items-center justify-between p-4 rounded-2xl border transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
                           <div className="flex items-center gap-3">
                             <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${p.lastAnswer?.isCorrect ? 'bg-emerald-100' : 'bg-red-100'}`}>
                               {p.lastAnswer?.isCorrect ? <CheckCircle2 className="w-6 h-6 text-emerald-600" /> : <XCircle className="w-6 h-6 text-red-600" />}
                             </div>
                             <div className="text-left">
                               <p className="text-xs font-black text-slate-400 uppercase leading-none mb-1">{p.name}</p>
-                              <p className="text-lg font-black text-slate-900 leading-none truncate max-w-[150px]">{p.lastAnswer?.choice || 'No Answer'}</p>
+                              <p className={`text-lg font-black leading-none truncate max-w-[150px] transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{p.lastAnswer?.choice || 'No Answer'}</p>
                             </div>
                           </div>
                           {p.lastAnswer?.reactionTime !== undefined && (
@@ -1462,17 +1498,17 @@ function QuizView({
                         </div>
                       ))}
                     </div>
-                    <p className="mt-4 text-xl font-bold text-slate-500 bg-slate-100 px-6 py-2 rounded-full inline-block">Answer: {question.meaning}</p>
+                    <p className={`mt-4 text-xl font-bold px-6 py-2 rounded-full inline-block transition-colors ${isDarkMode ? 'text-slate-300 bg-slate-800' : 'text-slate-500 bg-slate-100'}`}>Answer: {question.meaning}</p>
                     {isListening && question.explanation && (
-                      <div className="mt-4 p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                      <div className={`mt-4 p-4 rounded-2xl border text-left transition-colors ${isDarkMode ? 'bg-indigo-950/30 border-indigo-900 text-indigo-200' : 'bg-indigo-50 border-indigo-100 text-indigo-900'}`}>
                         <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
-                        <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                        <p className="text-sm font-bold leading-relaxed">{question.explanation}</p>
                       </div>
                     )}
                   </div>
                 ) : matchState?.phase === 'answering' ? (
                   <div className="flex flex-col items-center">
-                    <div className="w-20 h-20 rounded-full bg-indigo-100 flex items-center justify-center mb-6">
+                    <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 transition-colors ${isDarkMode ? 'bg-indigo-950' : 'bg-indigo-100'}`}>
                       <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                     </div>
                     <p className="text-3xl font-black text-indigo-600 tracking-tighter uppercase italic">Someone Answered!</p>
@@ -1481,9 +1517,9 @@ function QuizView({
                 ) : answerStatus === 'correct' ? (
                   <>
                     <motion.div 
-                      animate={{ scale: [1, 1.1, 1] }}
-                      transition={{ duration: 0.2 }}
-                      className="w-40 h-40 rounded-full bg-emerald-100 flex items-center justify-center mb-6 shadow-2xl shadow-emerald-200"
+                      initial={{ scale: 0.5 }}
+                      animate={{ scale: 1 }}
+                      className={`w-40 h-40 rounded-full flex items-center justify-center mb-6 shadow-xl ${isDarkMode ? 'bg-emerald-950/50 shadow-emerald-950' : 'bg-emerald-100 shadow-emerald-200'}`}
                     >
                       <CheckCircle2 className="w-24 h-24 text-emerald-500" />
                     </motion.div>
@@ -1492,14 +1528,14 @@ function QuizView({
                     </p>
                     {isListening && (
                       <div className="w-full max-w-md mt-8 space-y-4">
-                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                        <div className={`p-4 rounded-2xl border text-left transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Script</p>
-                          <p className="text-lg font-black text-slate-900 leading-tight">{question.word}</p>
+                          <p className={`text-lg font-black leading-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{question.word}</p>
                         </div>
                         {question.explanation && (
-                          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                          <div className={`p-4 rounded-2xl border text-left transition-colors ${isDarkMode ? 'bg-indigo-950/30 border-indigo-900 text-indigo-200' : 'bg-indigo-50 border-indigo-100 text-indigo-900'}`}>
                             <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
-                            <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                            <p className="text-sm font-bold leading-relaxed">{question.explanation}</p>
                           </div>
                         )}
                       </div>
@@ -1507,21 +1543,21 @@ function QuizView({
                   </>
                 ) : answerStatus === 'opponent_won' ? (
                   <>
-                    <div className="w-40 h-40 rounded-full bg-red-100 flex items-center justify-center mb-6 shadow-2xl shadow-red-200">
+                    <div className={`w-40 h-40 rounded-full flex items-center justify-center mb-6 shadow-2xl ${isDarkMode ? 'bg-red-950/50 shadow-red-950' : 'bg-red-100 shadow-red-200'}`}>
                       <XCircle className="w-24 h-24 text-red-500" />
                     </div>
                     <p className="text-3xl font-black text-red-600 tracking-tighter uppercase">{opponent?.name} GOT IT!</p>
-                    <p className="mt-4 text-xl font-bold text-slate-500 bg-slate-100 px-6 py-2 rounded-full">Answer: {question.meaning}</p>
+                    <p className={`mt-4 text-xl font-bold px-6 py-2 rounded-full transition-colors ${isDarkMode ? 'text-slate-300 bg-slate-800' : 'text-slate-500 bg-slate-100'}`}>Answer: {question.meaning}</p>
                     {isListening && (
                       <div className="w-full max-w-md mt-6 space-y-4">
-                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                        <div className={`p-4 rounded-2xl border text-left transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Script</p>
-                          <p className="text-lg font-black text-slate-900 leading-tight">{question.word}</p>
+                          <p className={`text-lg font-black leading-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{question.word}</p>
                         </div>
                         {question.explanation && (
-                          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                          <div className={`p-4 rounded-2xl border text-left transition-colors ${isDarkMode ? 'bg-indigo-950/30 border-indigo-900 text-indigo-200' : 'bg-indigo-50 border-indigo-100 text-indigo-900'}`}>
                             <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
-                            <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                            <p className="text-sm font-bold leading-relaxed">{question.explanation}</p>
                           </div>
                         )}
                       </div>
@@ -1530,24 +1566,24 @@ function QuizView({
                 ) : (
                   <>
                     <motion.div 
-                      animate={{ x: [-5, 5, -5, 5, 0] }}
-                      transition={{ duration: 0.2 }}
-                      className="w-40 h-40 rounded-full bg-red-100 flex items-center justify-center mb-6 shadow-2xl shadow-red-200"
+                      initial={{ scale: 0.5 }}
+                      animate={{ scale: 1 }}
+                      className={`w-40 h-40 rounded-full flex items-center justify-center mb-6 shadow-xl ${isDarkMode ? 'bg-red-950/50 shadow-red-950' : 'bg-red-100 shadow-red-200'}`}
                     >
                       <XCircle className="w-24 h-24 text-red-500" />
                     </motion.div>
                     <p className="text-6xl font-black text-red-600 tracking-tighter drop-shadow-sm">MISS!</p>
-                    <p className="mt-4 text-xl font-bold text-slate-500 bg-slate-100 px-6 py-2 rounded-full">Correct: {question.meaning}</p>
+                    <p className={`mt-4 text-xl font-bold px-6 py-2 rounded-full transition-colors ${isDarkMode ? 'text-slate-300 bg-slate-800' : 'text-slate-500 bg-slate-100'}`}>Correct: {question.meaning}</p>
                     {isListening && (
                       <div className="w-full max-w-md mt-6 space-y-4">
-                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                        <div className={`p-4 rounded-2xl border text-left transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Script</p>
-                          <p className="text-lg font-black text-slate-900 leading-tight">{question.word}</p>
+                          <p className={`text-lg font-black leading-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{question.word}</p>
                         </div>
                         {question.explanation && (
-                          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 text-left">
+                          <div className={`p-4 rounded-2xl border text-left transition-colors ${isDarkMode ? 'bg-indigo-950/30 border-indigo-900 text-indigo-200' : 'bg-indigo-50 border-indigo-100 text-indigo-900'}`}>
                             <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Explanation</p>
-                            <p className="text-sm font-bold text-indigo-900 leading-relaxed">{question.explanation}</p>
+                            <p className="text-sm font-bold leading-relaxed">{question.explanation}</p>
                           </div>
                         )}
                       </div>
@@ -1566,9 +1602,9 @@ function QuizView({
           const isCorrect = choice === question.meaning;
           const isOpponentSelected = opponentAnswer?.playerId !== undefined && opponentAnswer.isCorrect && choice === question.meaning;
           
-          let bgColor = 'bg-white';
-          let borderColor = 'border-slate-200';
-          let textColor = 'text-slate-800';
+          let bgColor = isDarkMode ? 'bg-slate-900' : 'bg-white';
+          let borderColor = isDarkMode ? 'border-slate-800' : 'border-slate-200';
+          let textColor = isDarkMode ? 'text-white' : 'text-slate-800';
 
           if (answerStatus !== 'idle' || matchState?.phase === 'result') {
             if (isCorrect) {
@@ -1580,9 +1616,21 @@ function QuizView({
               borderColor = 'border-red-600';
               textColor = 'text-white';
             } else {
-              bgColor = 'bg-slate-50';
-              textColor = 'text-slate-300';
-              borderColor = 'border-slate-100';
+              if (isDarkMode) {
+                bgColor = 'bg-slate-950/40';
+                textColor = 'text-slate-700';
+                borderColor = 'border-slate-900';
+              } else {
+                bgColor = 'bg-slate-50';
+                textColor = 'text-slate-300';
+                borderColor = 'border-slate-100';
+              }
+            }
+          } else {
+            if (isSelected) {
+              bgColor = 'bg-indigo-600';
+              borderColor = 'border-indigo-700';
+              textColor = 'text-white';
             }
           }
 
@@ -1607,8 +1655,9 @@ function QuizView({
   );
 }
 
-function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onToggleFavorite }: { 
+function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriendMatch, onToggleFavorite }: { 
   player: Player | null, 
+  isDarkMode: boolean,
   onSelectPack: (pack: Pack) => void, 
   onWrongQuestions: () => void,
   onFriendMatch: () => void,
@@ -1661,13 +1710,13 @@ function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onTog
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex p-1 bg-slate-100 rounded-2xl mb-8 max-w-sm mx-auto">
+      <div className={`flex p-1 rounded-2xl mb-8 max-w-sm mx-auto transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-slate-100'}`}>
         <button
           onClick={() => setActiveTab('vocabulary')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-black text-sm transition-all ${
             activeTab === 'vocabulary' 
-              ? 'bg-white text-indigo-600 shadow-sm' 
-              : 'text-slate-400 hover:text-slate-600'
+              ? (isDarkMode ? 'bg-slate-800 text-indigo-400 shadow-lg' : 'bg-white text-indigo-600 shadow-sm')
+              : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600')
           }`}
         >
           <BookOpen className="w-4 h-4" />
@@ -1677,8 +1726,8 @@ function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onTog
           onClick={() => setActiveTab('listening')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-black text-sm transition-all ${
             activeTab === 'listening' 
-              ? 'bg-white text-indigo-600 shadow-sm' 
-              : 'text-slate-400 hover:text-slate-600'
+              ? (isDarkMode ? 'bg-slate-800 text-indigo-400 shadow-lg' : 'bg-white text-indigo-600 shadow-sm')
+              : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600')
           }`}
         >
           <Headphones className="w-4 h-4" />
@@ -1698,14 +1747,14 @@ function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onTog
           }
 
           return (
-            <section key={category} className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+            <section key={category} className={`${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'} rounded-[2rem] border overflow-hidden shadow-sm transition-colors`}>
               <button 
                 onClick={() => toggleCategory(category)}
-                className="w-full flex items-center justify-between p-6 hover:bg-slate-50 transition-colors"
+                className={`w-full flex items-center justify-between p-6 transition-colors ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-50'}`}
               >
                 <div className="flex items-center gap-3">
                   <div className={`h-1 w-8 ${category === 'お気に入り' ? 'bg-amber-400' : 'bg-indigo-600'} rounded-full`}></div>
-                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-tighter">{category}</h2>
+                  <h2 className={`text-xl font-black uppercase tracking-tighter ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{category}</h2>
                 </div>
                 <motion.div
                   animate={{ rotate: isExpanded ? 90 : 0 }}
@@ -1792,25 +1841,25 @@ function HomeView({ player, onSelectPack, onWrongQuestions, onFriendMatch, onTog
       </div>
 
       <div className="mt-12">
-        <h3 className="text-xl font-black text-slate-900 mb-4 tracking-tighter uppercase">Quick Actions</h3>
+        <h3 className={`text-xl font-black mb-4 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>クイックアクション</h3>
         <div className="grid grid-cols-2 gap-4">
            <button 
              onClick={() => { playSound('click'); onFriendMatch(); }}
-             className="p-6 bg-white rounded-3xl border-2 border-slate-100 flex flex-col items-center gap-3 shadow-sm hover:border-indigo-500 transition-all group"
+             className={`p-6 rounded-3xl border-2 flex flex-col items-center gap-3 shadow-sm transition-all group ${isDarkMode ? 'bg-slate-900 border-slate-800 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-500'}`}
            >
-              <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 transition-colors">
-                 <QrCode className="w-6 h-6 text-indigo-600 group-hover:text-white" />
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-800 group-hover:bg-indigo-600' : 'bg-indigo-50 group-hover:bg-indigo-600'}`}>
+                 <QrCode className={`w-6 h-6 transition-colors ${isDarkMode ? 'text-indigo-400 group-hover:text-white' : 'text-indigo-600 group-hover:text-white'}`} />
               </div>
-              <span className="font-black text-slate-700 text-sm">Friend Match</span>
+              <span className={`font-black text-sm transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>フレンド対戦</span>
            </button>
            <button 
               onClick={onWrongQuestions}
-              className="p-6 bg-white rounded-3xl border-2 border-slate-100 flex flex-col items-center gap-3 shadow-sm hover:border-indigo-500 transition-all group"
+              className={`p-6 rounded-3xl border-2 flex flex-col items-center gap-3 shadow-sm transition-all group ${isDarkMode ? 'bg-slate-900 border-slate-800 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-500'}`}
             >
-              <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center group-hover:bg-red-600 transition-colors">
-                 <RotateCcw className="w-6 h-6 text-red-600 group-hover:text-white" />
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-800 group-hover:bg-red-600' : 'bg-red-50 group-hover:bg-red-600'}`}>
+                 <RotateCcw className={`w-6 h-6 transition-colors ${isDarkMode ? 'text-red-400 group-hover:text-white' : 'text-red-600 group-hover:text-white'}`} />
               </div>
-              <span className="font-black text-slate-700 text-sm">間違えた問題</span>
+              <span className={`font-black text-sm transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>間違えた問題</span>
            </button>
         </div>
       </div>
@@ -1908,11 +1957,12 @@ function SuggestionFormView({ onSubmit, onBack }: { onSubmit: (type: string, con
   );
 }
 
-function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: { 
+function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack, isDarkMode }: { 
   pack: Pack, 
   onStartTraining: (count: number) => void,
   onStartBattle: (count: number) => void,
-  onBack: () => void 
+  onBack: () => void,
+  isDarkMode: boolean
 }) {
   const [selectedCount, setSelectedCount] = useState(50);
 
@@ -1922,7 +1972,7 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
       animate={{ x: 0, opacity: 1 }}
       className="p-6 max-w-2xl mx-auto w-full"
     >
-      <button onClick={onBack} className="mb-8 flex items-center gap-2 text-slate-400 font-black uppercase text-xs tracking-widest hover:text-slate-900 transition-colors">
+      <button onClick={onBack} className={`mb-8 flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
         <ChevronLeft className="w-5 h-5" /> Back to Packs
       </button>
 
@@ -1940,17 +1990,17 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
       <div className="space-y-10">
         <section>
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter">Select Mode</h3>
+            <h3 className={`text-xl font-black uppercase tracking-tighter transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Select Mode</h3>
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Choose your challenge</span>
           </div>
           
           <div className="grid grid-cols-1 gap-4">
-            <div className="bg-white rounded-3xl p-6 border-2 border-slate-100 shadow-sm">
+            <div className={`rounded-3xl p-6 border-2 shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
               <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-indigo-950' : 'bg-indigo-100'}`}>
                   <Play className="w-5 h-5 text-indigo-600 fill-current" />
                 </div>
-                <span className="font-black text-slate-900 uppercase tracking-tight">トレーニングモード</span>
+                <span className={`font-black uppercase tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>トレーニングモード</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {[10, 30, 50, 100, 150].map(count => (
@@ -1960,7 +2010,7 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
                       playSound('click');
                       onStartTraining(count);
                     }}
-                    className="py-4 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 hover:border-indigo-500 hover:bg-white hover:text-indigo-600 transition-all"
+                    className={`py-4 border-2 border-transparent rounded-2xl font-black transition-all ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:border-indigo-500 hover:text-indigo-400' : 'bg-slate-50 text-slate-700 hover:border-indigo-500 hover:bg-white hover:text-indigo-600'}`}
                   >
                     {count}
                   </button>
@@ -1969,9 +2019,9 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
             </div>
 
             {pack.id !== 'wrong_questions' && (
-              <div className="bg-indigo-900 rounded-3xl p-6 shadow-2xl">
+              <div className={`rounded-3xl p-6 shadow-2xl transition-colors ${isDarkMode ? 'bg-indigo-950/20 border-2 border-indigo-900' : 'bg-indigo-900'}`}>
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isDarkMode ? 'bg-white/5' : 'bg-white/10'}`}>
                     <Users className="w-5 h-5 text-white" />
                   </div>
                   <span className="font-black text-white uppercase tracking-tight">リアルタイムバトル</span>
@@ -1982,7 +2032,7 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
                       key={count}
                       onClick={() => setSelectedCount(count)}
                       className={`flex-1 min-w-[100px] py-4 rounded-2xl font-black transition-all ${
-                        selectedCount === count ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white/50 hover:bg-white/20'
+                        selectedCount === count ? 'bg-indigo-600 text-white' : (isDarkMode ? 'bg-white/5 text-white/30 hover:bg-white/10' : 'bg-white/10 text-white/50 hover:bg-white/20')
                       }`}
                     >
                       {count} Questions
@@ -1991,7 +2041,7 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
                 </div>
                 <button
                   onClick={() => onStartBattle(selectedCount)}
-                  className="w-full py-5 bg-white text-slate-900 rounded-2xl font-black text-xl flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl"
+                  className={`w-full py-5 rounded-2xl font-black text-xl flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl ${isDarkMode ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-white text-slate-900 hover:bg-indigo-50'}`}
                 >
                   FIND MATCH <ChevronRight className="w-6 h-6" />
                 </button>
@@ -2000,14 +2050,14 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
           </div>
 
           {/* Word List Display */}
-          <div className="mt-8 bg-white rounded-3xl p-6 border-2 border-slate-100 shadow-sm">
-            <h3 className="font-black text-slate-900 uppercase tracking-tight mb-4 flex items-center gap-2">
+          <div className={`mt-8 rounded-3xl p-6 border-2 shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
+            <h3 className={`font-black uppercase tracking-tight mb-4 flex items-center gap-2 transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
               <Info className="w-5 h-5 text-indigo-600" />
               収録内容一覧（{pack.words.length}問）
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
               {pack.words.map((w, i) => (
-                <div key={i} className="text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-100 truncate">
+                <div key={i} className={`text-[10px] font-bold px-2 py-1 rounded border truncate transition-colors ${isDarkMode ? 'text-slate-400 bg-slate-950 border-slate-800' : 'text-slate-500 bg-slate-50 border-slate-100'}`}>
                   {w.word}
                 </div>
               ))}
@@ -2019,13 +2069,13 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack }: {
   );
 }
 
-function MatchingView({ onCancel, matchState }: { onCancel: () => void, matchState?: MatchRoomState | null }) {
+function MatchingView({ onCancel, matchState, isDarkMode }: { onCancel: () => void, matchState?: MatchRoomState | null, isDarkMode: boolean }) {
   if (matchState?.players?.length === 2) {
     return (
       <motion.div 
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="min-h-[80vh] flex flex-col items-center justify-center p-6 text-center"
+        className={`min-h-[80vh] flex flex-col items-center justify-center p-6 text-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}
       >
         <motion.div
           animate={{ y: [0, -10, 0] }}
@@ -2039,12 +2089,12 @@ function MatchingView({ onCancel, matchState }: { onCancel: () => void, matchSta
           {matchState.players.map((p, i) => (
             <React.Fragment key={p.id}>
               <div className="flex flex-col items-center gap-2">
-                <div className="w-20 h-20 rounded-2xl bg-white shadow-xl flex items-center justify-center border-2 border-slate-100">
+                <div className={`w-20 h-20 rounded-2xl shadow-xl flex items-center justify-center border-2 transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
                   <div className="text-4xl">{p.icon}</div>
                 </div>
-                <p className="font-black text-slate-900 uppercase text-xs">{p.name}</p>
+                <p className={`font-black uppercase text-xs transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-900'}`}>{p.name}</p>
               </div>
-              {i === 0 && <div className="text-2xl font-black text-slate-300 italic">VS</div>}
+              {i === 0 && <div className={`text-2xl font-black italic transition-colors ${isDarkMode ? 'text-slate-800' : 'text-slate-300'}`}>VS</div>}
             </React.Fragment>
           ))}
         </div>
@@ -2053,22 +2103,22 @@ function MatchingView({ onCancel, matchState }: { onCancel: () => void, matchSta
   }
 
   return (
-    <div className="min-h-[80vh] flex flex-col items-center justify-center p-6">
+    <div className={`min-h-[80vh] flex flex-col items-center justify-center p-6 transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
       <div className="relative mb-8">
         <motion.div 
           animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
           transition={{ repeat: Infinity, duration: 2 }}
-          className="w-32 h-32 bg-indigo-100 rounded-full flex items-center justify-center"
+          className={`w-32 h-32 rounded-full flex items-center justify-center transition-colors ${isDarkMode ? 'bg-indigo-950/40' : 'bg-indigo-100'}`}
         >
           <Users className="w-16 h-16 text-indigo-600" />
         </motion.div>
       </div>
-      <h2 className="text-2xl font-black text-slate-900 mb-2">matching..</h2>
+      <h2 className={`text-2xl font-black mb-2 transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>matching..</h2>
       <p className="text-slate-500 mb-8">対戦相手を探しています</p>
       
       <button 
         onClick={onCancel}
-        className="px-8 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
+        className={`px-8 py-3 rounded-xl font-bold transition-all ${isDarkMode ? 'bg-slate-900 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
       >
         キャンセル
       </button>
@@ -2076,12 +2126,13 @@ function MatchingView({ onCancel, matchState }: { onCancel: () => void, matchSta
   );
 }
 
-function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSelectPack }: { 
+function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSelectPack, isDarkMode }: { 
   pack: Pack | null, 
   onBack: () => void,
   onCreateMatch: (count: number) => void,
   onJoinMatch: () => void,
-  onSelectPack: (pack: Pack) => void
+  onSelectPack: (pack: Pack) => void,
+  isDarkMode: boolean
 }) {
   // If the pack is "wrong_questions", we must force selection of a real pack
   const initialIsSelecting = !pack || pack.id === 'wrong_questions';
@@ -2094,23 +2145,23 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
         animate={{ x: 0, opacity: 1 }}
         className="p-6 max-w-2xl mx-auto w-full"
       >
-        <button onClick={onBack} className="mb-8 flex items-center gap-2 text-slate-400 font-black uppercase text-xs tracking-widest hover:text-slate-900 transition-colors">
+        <button onClick={onBack} className={`mb-8 flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
           <ChevronLeft className="w-5 h-5" /> Back
         </button>
-        <h2 className="text-3xl font-black text-slate-900 mb-8 tracking-tighter uppercase">Select Pack for Friend Match</h2>
+        <h2 className={`text-3xl font-black mb-8 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Select Pack for Friend Match</h2>
         <div className="grid grid-cols-1 gap-4">
           {PACKS.map(p => (
             <button
               key={p.id}
               onClick={() => { onSelectPack(p); setIsSelectingPack(false); }}
-              className={`p-6 rounded-3xl border-2 flex items-center justify-between group transition-all ${pack?.id === p.id ? 'border-indigo-600 bg-indigo-50' : 'border-slate-100 bg-white hover:border-indigo-300'}`}
+              className={`p-6 rounded-3xl border-2 flex items-center justify-between group transition-all ${pack?.id === p.id ? 'border-indigo-600 bg-indigo-50' : (isDarkMode ? 'border-slate-800 bg-slate-900 hover:border-indigo-500/50' : 'border-slate-100 bg-white hover:border-indigo-300')}`}
             >
               <div className="flex items-center gap-4">
                 <div className={`w-12 h-12 rounded-2xl ${p.color} flex items-center justify-center text-white font-black`}>
                   {p.name.charAt(0)}
                 </div>
                 <div className="text-left">
-                  <h3 className="font-black text-slate-900 uppercase tracking-tight">{p.name}</h3>
+                  <h3 className={`font-black uppercase tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{p.name}</h3>
                   <p className="text-xs text-slate-400 font-bold">{p.words.length} Questions</p>
                 </div>
               </div>
@@ -2128,39 +2179,39 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
       animate={{ x: 0, opacity: 1 }}
       className="p-6 max-w-2xl mx-auto w-full"
     >
-      <button onClick={onBack} className="mb-8 flex items-center gap-2 text-slate-400 font-black uppercase text-xs tracking-widest hover:text-slate-900 transition-colors">
+      <button onClick={onBack} className={`mb-8 flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
         <ChevronLeft className="w-5 h-5" /> Back
       </button>
 
-      <h2 className="text-3xl font-black text-slate-900 mb-8 tracking-tighter uppercase">Friend Match</h2>
+      <h2 className={`text-3xl font-black mb-8 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Friend Match</h2>
 
       <div className="grid grid-cols-1 gap-6">
-        <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100">
+        <div className={`rounded-[2.5rem] p-8 shadow-xl border transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-indigo-950/40' : 'bg-indigo-50'}`}>
                 <QrCode className="w-6 h-6 text-indigo-600" />
               </div>
               <div>
-                <h3 className="font-black text-slate-900 uppercase tracking-tight">Create Match</h3>
+                <h3 className={`font-black uppercase tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Create Match</h3>
                 <p className="text-xs text-slate-400 font-bold">QRコードを表示して友達を招待</p>
               </div>
             </div>
             <button 
               onClick={() => setIsSelectingPack(true)}
-              className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-black hover:bg-slate-200 transition-all"
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
             >
               CHANGE PACK
             </button>
           </div>
 
-          <div className="mb-6 p-4 bg-indigo-50 rounded-2xl border border-indigo-100 flex items-center gap-3">
-             <div className={`w-10 h-10 rounded-xl ${pack.color} flex items-center justify-center text-white font-black text-xs`}>
-                {pack.name.charAt(0)}
+          <div className={`mb-6 p-4 rounded-2xl border flex items-center gap-3 transition-colors ${isDarkMode ? 'bg-indigo-950/20 border-indigo-900' : 'bg-indigo-50 border-indigo-100'}`}>
+             <div className={`w-10 h-10 rounded-xl ${pack?.color || 'bg-slate-200'} flex items-center justify-center text-white font-black text-xs`}>
+                {pack?.name.charAt(0) || '?'}
              </div>
              <div>
                 <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Selected Pack</p>
-                <h4 className="font-black text-indigo-900 uppercase text-sm">{pack.name}</h4>
+                <h4 className={`font-black uppercase text-sm ${isDarkMode ? 'text-indigo-300' : 'text-indigo-900'}`}>{pack?.name}</h4>
              </div>
           </div>
           
@@ -2169,7 +2220,7 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
               <button
                 key={count}
                 onClick={() => onCreateMatch(count)}
-                className="py-4 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 hover:border-indigo-500 hover:bg-white hover:text-indigo-600 transition-all"
+                className={`py-4 border-2 border-transparent rounded-2xl font-black transition-all ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:border-indigo-500/50 hover:text-indigo-400' : 'bg-slate-50 text-slate-700 hover:border-indigo-500 hover:bg-white hover:text-indigo-600'}`}
               >
                 {count} Questions
               </button>
@@ -2179,14 +2230,14 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
 
         <button 
           onClick={onJoinMatch}
-          className="bg-indigo-900 text-white rounded-[2.5rem] p-8 shadow-xl flex items-center justify-between group active:scale-95 transition-all"
+          className={`rounded-[2.5rem] p-8 shadow-xl flex items-center justify-between group active:scale-95 transition-all ${isDarkMode ? 'bg-indigo-950/30 ring-1 ring-white/10' : 'bg-indigo-900'}`}
         >
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center group-hover:bg-white/20 transition-colors">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-indigo-500/10 group-hover:bg-indigo-500/20' : 'bg-white/10 group-hover:bg-white/20'}`}>
               <Scan className="w-6 h-6 text-white" />
             </div>
             <div className="text-left">
-              <h3 className="font-black uppercase tracking-tight">Join Match</h3>
+              <h3 className="font-black text-white uppercase tracking-tight">Join Match</h3>
               <p className="text-xs text-white/50 font-bold">友達のQRコードを読み取る</p>
             </div>
           </div>
@@ -2197,49 +2248,50 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
   );
 }
 
-function FriendMatchWaitingView({ inviteCode, onCancel, matchState, player, onStart }: { 
+function FriendMatchWaitingView({ inviteCode, onCancel, matchState, player, onStart, isDarkMode }: { 
   inviteCode: string, 
   onCancel: () => void,
   matchState?: MatchRoomState | null,
   player?: Player | null,
-  onStart?: () => void
+  onStart?: () => void,
+  isDarkMode: boolean
 }) {
   const joinUrl = `${window.location.origin}/join/${inviteCode}`;
   const isHost = matchState?.hostId === player?.id;
   const canStart = (matchState?.players?.length || 0) >= 2;
 
   return (
-    <div className="min-h-[80vh] flex flex-col items-center justify-center p-6 text-center">
-      <div className="bg-white p-8 rounded-[3rem] shadow-2xl border border-slate-100 mb-8 max-w-md w-full">
-        <h2 className="text-2xl font-black text-slate-900 mb-2 uppercase tracking-tighter">Waiting Room</h2>
+    <div className={`min-h-[80vh] flex flex-col items-center justify-center p-6 text-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
+      <div className={`p-8 rounded-[3rem] shadow-2xl border transition-colors max-w-md w-full ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100 mb-8'}`}>
+        <h2 className={`text-2xl font-black mb-2 uppercase tracking-tighter transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Waiting Room</h2>
         <p className="text-slate-400 font-bold text-sm mb-8">友達にこのQRコードを見せてください</p>
         
-        <div className="bg-white p-4 rounded-3xl border-4 border-slate-900 inline-block mb-8">
+        <div className={`p-4 rounded-3xl border-4 inline-block mb-8 transition-colors ${isDarkMode ? 'bg-white border-indigo-600' : 'bg-white border-slate-900'}`}>
           <QRCodeSVG value={joinUrl} size={200} />
         </div>
 
-        <div className="bg-slate-50 p-6 rounded-3xl mb-8 relative group border-2 border-slate-100">
+        <div className={`mb-8 p-6 rounded-3xl relative group border-2 transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invite Code</p>
-          <p className="text-5xl font-black text-slate-900 tracking-[0.2em] leading-none">{inviteCode}</p>
+          <p className={`text-5xl font-black tracking-[0.2em] leading-none transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{inviteCode}</p>
         </div>
 
         <div className="space-y-3 mb-8">
           <p className="text-xs font-black text-slate-400 uppercase tracking-widest text-left px-2">Players ({matchState?.players?.length || 0}/4)</p>
           {matchState?.players?.map(p => (
-            <div key={p.id} className="flex items-center gap-3 bg-white p-3 rounded-2xl border-2 border-slate-100 shadow-sm">
-              <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-xl">
+            <div key={p.id} className={`flex items-center gap-3 p-3 rounded-2xl border-2 shadow-sm transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-100'}`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-slate-100'}`}>
                 {p.icon}
               </div>
               <div className="flex-1 text-left">
-                <p className="font-black text-slate-900">{p.name}</p>
+                <p className={`font-black transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{p.name}</p>
                 {p.id === matchState?.hostId && <p className="text-[10px] font-black text-indigo-500 uppercase">Host</p>}
               </div>
               {p.id === player?.id && <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>}
             </div>
           ))}
           {[...Array(4 - (matchState?.players?.length || 0))].map((_, i) => (
-            <div key={i} className="flex items-center gap-3 bg-slate-50/50 p-3 rounded-2xl border-2 border-dashed border-slate-200">
-              <div className="w-10 h-10 rounded-xl border-2 border-dashed border-slate-200"></div>
+            <div key={i} className={`flex items-center gap-3 p-3 rounded-2xl border-2 border-dashed transition-colors ${isDarkMode ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50/50 border-slate-200'}`}>
+              <div className={`w-10 h-10 rounded-xl border-2 border-dashed transition-colors ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}></div>
               <p className="text-slate-300 font-bold text-sm">Waiting...</p>
             </div>
           ))}
@@ -2257,7 +2309,7 @@ function FriendMatchWaitingView({ inviteCode, onCancel, matchState, player, onSt
           )}
           <button 
             onClick={onCancel}
-            className="w-full py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+            className={`w-full py-3 rounded-2xl font-bold transition-all ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
           >
             キャンセル
           </button>
@@ -2267,7 +2319,7 @@ function FriendMatchWaitingView({ inviteCode, onCancel, matchState, player, onSt
   );
 }
 
-function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (code: string) => void }) {
+function FriendMatchJoinView({ onBack, onJoin, isDarkMode }: { onBack: () => void, onJoin: (code: string) => void, isDarkMode: boolean }) {
   const [code, setCode] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2313,11 +2365,11 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
       animate={{ x: 0, opacity: 1 }}
       className="p-6 max-w-2xl mx-auto w-full"
     >
-      <button onClick={onBack} className="mb-8 flex items-center gap-2 text-slate-400 font-black uppercase text-xs tracking-widest hover:text-slate-900 transition-colors">
+      <button onClick={onBack} className={`mb-8 flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
         <ChevronLeft className="w-5 h-5" /> Back
       </button>
 
-      <h2 className="text-3xl font-black text-slate-900 mb-8 tracking-tighter uppercase">Join Match</h2>
+      <h2 className={`text-3xl font-black mb-8 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Join Match</h2>
 
       {error && (
         <div className="mb-6 p-4 bg-red-50 border-2 border-red-100 rounded-2xl text-red-600 font-bold text-sm">
@@ -2326,7 +2378,7 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
       )}
 
       <div className="space-y-6">
-        <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100">
+        <div className={`rounded-[2.5rem] p-8 shadow-xl border transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
           <label className="block text-sm font-black text-slate-400 uppercase tracking-widest mb-4">Enter Invite Code</label>
           <div className="flex gap-3">
             <input 
@@ -2335,7 +2387,7 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
               onChange={(e) => setCode(e.target.value.toUpperCase())}
               placeholder="6-DIGIT CODE"
               maxLength={6}
-              className="flex-1 px-6 py-4 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all font-black text-2xl tracking-widest uppercase"
+              className={`flex-1 px-6 py-4 rounded-2xl border-2 outline-none transition-all font-black text-2xl tracking-widest uppercase ${isDarkMode ? 'bg-slate-950 border-slate-800 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'}`}
             />
             <button 
               onClick={() => onJoin(code)}
@@ -2348,12 +2400,12 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
         </div>
 
         <div className="relative flex items-center py-4">
-          <div className="flex-grow border-t border-slate-100"></div>
+          <div className={`flex-grow border-t transition-colors ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}></div>
           <span className="flex-shrink mx-4 text-slate-300 text-xs font-black uppercase tracking-widest">OR</span>
-          <div className="flex-grow border-t border-slate-100"></div>
+          <div className={`flex-grow border-t transition-colors ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}></div>
         </div>
 
-        <div className="bg-slate-900 rounded-[2.5rem] p-8 shadow-xl text-center">
+        <div className={`rounded-[2.5rem] p-8 shadow-xl text-center transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-slate-900'}`}>
           {!isScanning ? (
             <button 
               onClick={() => setIsScanning(true)}
@@ -2383,7 +2435,7 @@ function FriendMatchJoinView({ onBack, onJoin }: { onBack: () => void, onJoin: (
     </motion.div>
   );
 }
-function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, onRetry, onHome, isRematchRequested, onRematch, matchState, player, answerHistory, onSaveWrongQuestions }: { 
+function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, onRetry, onHome, isRematchRequested, onRematch, matchState, player, answerHistory, onSaveWrongQuestions, isDarkMode }: { 
   mode: 'training' | 'battle', 
   score: number, 
   wrongCount: number,
@@ -2397,7 +2449,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   matchState?: MatchRoomState | null,
   player?: Player | null,
   answerHistory: { word: string, meaning: string, status: 'correct' | 'wrong' | 'lost' }[],
-  onSaveWrongQuestions: (words: Word[]) => void
+  onSaveWrongQuestions: (words: Word[]) => void,
+  isDarkMode: boolean
 }) {
   const isWin = mode === 'battle' ? (opponentScore !== undefined && score > opponentScore) : true;
   const isDraw = mode === 'battle' && opponentScore !== undefined && score === opponentScore;
@@ -2471,7 +2524,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
       animate={{ opacity: 1, y: 0 }}
       className="p-6 max-w-2xl mx-auto w-full"
     >
-      <div className="bg-white rounded-[3rem] p-8 md:p-12 shadow-2xl border border-slate-100 text-center relative overflow-hidden">
+      <div className={`rounded-[3rem] p-8 md:p-12 shadow-2xl border text-center relative overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
         {mode === 'battle' ? (
           <>
             {/* Top Section: Scores */}
@@ -2480,7 +2533,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
                 <div className="text-5xl font-black text-indigo-600">{score}</div>
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Your Score</div>
               </div>
-              <div className="h-12 w-px bg-slate-100"></div>
+              <div className={`h-12 w-px transition-colors ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}></div>
               <div className="flex flex-col items-center gap-2">
                 <div className="text-5xl font-black text-red-600">{opponentScore ?? 0}</div>
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opponent</div>
@@ -2491,7 +2544,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             <div className="flex items-center justify-center gap-8 md:gap-16 mb-8">
               {/* Player */}
               <div className="flex flex-col items-center gap-4">
-                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative ${isWin && !isDraw ? 'bg-emerald-50 ring-4 ring-emerald-500' : 'bg-slate-50'}`}>
+                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative transition-colors ${isWin && !isDraw ? (isDarkMode ? 'bg-emerald-950/30 ring-4 ring-emerald-500' : 'bg-emerald-50 ring-4 ring-emerald-500') : (isDarkMode ? 'bg-slate-800' : 'bg-slate-50')}`}>
                   {player && React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: `w-12 h-12 ${isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
                   {isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
                 </div>
@@ -2500,11 +2553,11 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
                 </div>
               </div>
 
-              <div className="text-4xl font-black text-slate-200 italic">VS</div>
+              <div className={`text-4xl font-black italic transition-colors ${isDarkMode ? 'text-slate-800' : 'text-slate-200'}`}>VS</div>
 
               {/* Opponent */}
               <div className="flex flex-col items-center gap-4">
-                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative ${!isWin && !isDraw ? 'bg-emerald-50 ring-4 ring-emerald-500' : 'bg-slate-50'}`}>
+                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative transition-colors ${!isWin && !isDraw ? (isDarkMode ? 'bg-emerald-950/30 ring-4 ring-emerald-500' : 'bg-emerald-50 ring-4 ring-emerald-500') : (isDarkMode ? 'bg-slate-800' : 'bg-slate-50')}`}>
                   {opponent && React.createElement(PLAYER_ICONS.find(i => i.id === opponent.icon)?.icon || Smile, { className: `w-12 h-12 ${!isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
                   {!isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
                 </div>
@@ -2516,30 +2569,30 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
 
             {/* Invite Code for Friend Match */}
             {matchState?.type === 'friend' && matchState.inviteCode && (
-              <div className="mb-12 bg-slate-50 p-6 rounded-3xl border-2 border-slate-100 inline-block">
+              <div className={`mb-12 p-6 rounded-3xl border-2 inline-block transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invite Code</p>
-                <p className="text-4xl font-black text-slate-900 tracking-[0.2em] leading-none">{matchState.inviteCode}</p>
+                <p className={`text-4xl font-black tracking-[0.2em] leading-none transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{matchState.inviteCode}</p>
               </div>
             )}
           </>
         ) : (
           <>
             <div className="mb-8">
-              <div className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-50 text-indigo-600 rounded-full font-black uppercase tracking-widest text-sm mb-4">
+              <div className={`inline-flex items-center gap-2 px-6 py-2 rounded-full font-black uppercase tracking-widest text-sm mb-4 transition-colors ${isDarkMode ? 'bg-indigo-950/40 text-indigo-400' : 'bg-indigo-50 text-indigo-600'}`}>
                 <Trophy className="w-5 h-5" /> Training Complete
               </div>
-              <h2 className="text-6xl font-black text-slate-900 tracking-tighter mb-2">
-                {score}<span className="text-2xl text-slate-300"> / {total}</span>
+              <h2 className={`text-6xl font-black tracking-tighter mb-2 transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                {score}<span className={`text-2xl mx-1 transition-colors ${isDarkMode ? 'text-slate-700' : 'text-slate-300'}`}>/</span><span className={`text-2xl transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-300'}`}>{total}</span>
               </h2>
               <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Final Score</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4 mb-12">
-              <div className="bg-slate-50 p-4 rounded-3xl">
+              <div className={`p-4 rounded-3xl transition-colors ${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Accuracy</p>
-                <p className="text-xl font-black text-slate-900">{accuracy}%</p>
+                <p className={`text-xl font-black transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{accuracy}%</p>
               </div>
-              <div className="bg-slate-50 p-4 rounded-3xl">
+              <div className={`p-4 rounded-3xl transition-colors ${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Incorrect</p>
                 <p className="text-xl font-black text-red-500">{wrongCount}</p>
               </div>
@@ -2563,13 +2616,13 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
           )}
           <button
             onClick={() => { playSound('click'); onRetry(); }}
-            className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-xl shadow-lg hover:bg-slate-800 transition-all active:scale-95 flex items-center justify-center gap-2"
+            className={`w-full py-5 rounded-2xl font-black text-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 ${isDarkMode ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
           >
             <Play className="w-6 h-6" /> {mode === 'battle' ? 'NEW MATCH' : 'TRY AGAIN'}
           </button>
           <button
             onClick={() => { playSound('click'); onHome(); }}
-            className="w-full py-5 bg-white text-slate-600 rounded-2xl font-black text-xl border-2 border-slate-100 hover:bg-slate-50 transition-all active:scale-95 flex items-center justify-center gap-2"
+            className={`w-full py-5 rounded-2xl font-black text-xl border-2 transition-all active:scale-95 flex items-center justify-center gap-2 ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50'}`}
           >
             <Home className="w-6 h-6" /> EXIT TO HOME
           </button>
@@ -2579,8 +2632,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             disabled={isSaved || (answerHistory.filter(i => i.status !== 'correct').length === 0)}
             className={`w-full py-5 rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center gap-2 border-2 ${
               isSaved 
-              ? 'bg-emerald-50 border-emerald-500 text-emerald-600' 
-              : 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100'
+              ? (isDarkMode ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400' : 'bg-emerald-50 border-emerald-500 text-emerald-600')
+              : (isDarkMode ? 'bg-amber-950/20 border-amber-900 text-amber-500 hover:bg-amber-950/40' : 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100')
             }`}
           >
             {isSaved ? <Check className="w-6 h-6" /> : <Star className={`w-6 h-6 ${isSaved ? 'fill-amber-600' : ''}`} />}
@@ -2591,8 +2644,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             onClick={() => { playSound('click'); handleShare(); }}
             className={`w-full py-5 rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center gap-2 border-2 ${
               isCopied 
-              ? 'bg-emerald-50 border-emerald-500 text-emerald-600' 
-              : 'bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100'
+              ? (isDarkMode ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400' : 'bg-emerald-50 border-emerald-500 text-emerald-600')
+              : (isDarkMode ? 'bg-indigo-950/20 border-indigo-900 text-indigo-400 hover:bg-indigo-950/40' : 'bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100')
             }`}
           >
             {isCopied ? <Check className="w-6 h-6" /> : <Share2 className="w-6 h-6" />}
@@ -2602,13 +2655,13 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
 
         {/* Answer History List */}
         {answerHistory.length > 0 && (
-          <div className="mt-12 pt-12 border-t border-slate-100">
+          <div className={`mt-12 pt-12 border-t transition-colors ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Review Questions</h3>
             <div className="space-y-3 pr-2">
               {answerHistory.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl border transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
                   <div className="flex flex-col items-start text-left">
-                    <span className="font-black text-slate-700 tracking-tight">{item.word}</span>
+                    <span className={`font-black tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-700'}`}>{item.word}</span>
                     <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest leading-none mt-1">{item.meaning}</span>
                   </div>
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-lg flex-shrink-0 ${
@@ -2706,10 +2759,12 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
   );
 }
 
-function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionError, onReconnect }: { 
+function SetupView({ onComplete, isMusicMuted, onToggleMute, isDarkMode, onToggleTheme, isOnline, connectionError, onReconnect }: { 
   onComplete: (name: string, iconId: string) => void, 
-  isMuted: boolean, 
+  isMusicMuted: boolean, 
   onToggleMute: () => void,
+  isDarkMode: boolean,
+  onToggleTheme: () => void,
   isOnline: boolean,
   connectionError: string | null,
   onReconnect: () => void
@@ -2718,7 +2773,7 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
   const [selectedIcon, setSelectedIcon] = useState('smile');
 
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 relative overflow-hidden">
+    <div className={`min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
       {/* Offline Banner for Setup */}
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-[10px] font-black py-1.5 px-4 text-center z-50 flex items-center justify-center gap-2">
@@ -2733,22 +2788,28 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
         </div>
       )}
 
-      {/* Mute Button for Setup */}
-      <div className="absolute top-6 right-6 z-20">
+      {/* Control Buttons for Setup */}
+      <div className="absolute top-6 right-6 z-20 flex gap-2">
+        <button 
+          onClick={onToggleTheme}
+          className={`p-3 backdrop-blur-sm border rounded-2xl shadow-sm transition-all active:scale-95 ${isDarkMode ? 'bg-slate-900/80 border-slate-800 text-yellow-500' : 'bg-white/80 border-slate-100 text-slate-600'}`}
+        >
+          {isDarkMode ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}
+        </button>
         <button 
           onClick={onToggleMute}
-          className="p-3 bg-white/80 backdrop-blur-sm border border-slate-100 rounded-2xl shadow-sm hover:bg-slate-50 transition-all active:scale-95"
+          className={`p-3 backdrop-blur-sm border rounded-2xl shadow-sm transition-all active:scale-95 ${isDarkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-100'}`}
         >
-          {isMuted ? <VolumeX className="w-6 h-6 text-slate-400" /> : <Volume2 className="w-6 h-6 text-indigo-600" />}
+          {isMusicMuted ? <VolumeX className="w-6 h-6 text-slate-400" /> : <Volume2 className="w-6 h-6 text-indigo-600" />}
         </button>
       </div>
       {/* Animated Background - Removed as requested */}
-      <div className="absolute inset-0 z-0 bg-slate-50/50"></div>
+      <div className={`absolute inset-0 z-0 ${isDarkMode ? 'bg-slate-900/20' : 'bg-slate-50/50'}`}></div>
 
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-white/80 backdrop-blur-xl rounded-[3rem] p-8 md:p-12 w-full max-w-md relative z-10"
+        className={`backdrop-blur-xl rounded-[3rem] p-8 md:p-12 w-full max-w-md relative z-10 transition-colors ${isDarkMode ? 'bg-slate-900/80 border border-slate-800' : 'bg-white/80'}`}
       >
         <div className="text-center mb-10">
           <motion.div
@@ -2758,43 +2819,41 @@ function SetupView({ onComplete, isMuted, onToggleMute, isOnline, connectionErro
           >
             Hot & Exciting!
           </motion.div>
-          <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter leading-none mb-2">激アツ英単語</h1>
-          <p className="text-slate-500 font-bold">名前を入力して始めよう！</p>
+          <h1 className={`text-4xl md:text-5xl font-black tracking-tighter leading-none mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>激アツ英単語</h1>
+          <p className={`${isDarkMode ? 'text-slate-400' : 'text-slate-500'} font-bold`}>名前を入力して始めよう！</p>
         </div>
         
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">プレイヤー名を入力</label>
+            <label className={`block text-sm font-bold mb-2 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>プレイヤー名を入力</label>
             <input 
               type="text" 
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="名前を入力"
-              className="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all font-bold"
+              className={`w-full px-4 py-3 rounded-xl border-2 outline-none transition-all font-bold ${isDarkMode ? 'bg-slate-800 border-slate-700 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'}`}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">アイコンを選択</label>
+            <label className={`block text-sm font-bold mb-2 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>アイコンを選択</label>
             <div className="flex justify-between gap-2">
               {PLAYER_ICONS.map((item) => (
-                <button
+                <button 
                   key={item.id}
                   onClick={() => setSelectedIcon(item.id)}
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${
-                    selectedIcon === item.id ? 'bg-indigo-100 ring-2 ring-indigo-500 scale-110' : 'bg-slate-50'
-                  }`}
+                  className={`flex-1 p-3 rounded-xl border-2 transition-all flex items-center justify-center ${selectedIcon === item.id ? 'border-indigo-500 bg-indigo-50 scale-105' : (isDarkMode ? 'border-slate-800 bg-slate-800 hover:border-slate-600' : 'border-slate-100 bg-white hover:border-slate-200')}`}
                 >
-                  <item.icon className={`w-6 h-6 ${item.color}`} />
+                  <item.icon className={`w-8 h-8 ${item.color}`} />
                 </button>
               ))}
             </div>
           </div>
 
-          <button
+          <button 
             disabled={!name.trim()}
             onClick={() => onComplete(name, selectedIcon)}
-            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-lg shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:shadow-none transition-all active:scale-95"
+            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-50 transition-all active:scale-95"
           >
             スタート！
           </button>

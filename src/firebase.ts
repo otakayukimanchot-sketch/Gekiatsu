@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getAuth, signOut, onAuthStateChanged, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { initializeFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, getDocFromServer, deleteDoc } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -17,8 +17,6 @@ export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.error("Failed to set auth persistence:", err);
 });
-
-export const googleProvider = new GoogleAuthProvider();
 
 // Operation Types for Error Handling
 export enum OperationType {
@@ -85,8 +83,6 @@ async function testConnection() {
 testConnection();
 
 export {
-  signInWithPopup,
-  signInWithRedirect,
   signOut,
   onAuthStateChanged,
   collection,
