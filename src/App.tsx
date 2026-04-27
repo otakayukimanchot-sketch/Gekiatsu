@@ -328,8 +328,14 @@ export default function App() {
     localStorage.setItem('pokepoke_dark_mode', isDarkMode.toString());
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
+      document.documentElement.style.backgroundColor = '#020617';
+      document.body.style.backgroundColor = '#020617';
+      document.documentElement.style.colorScheme = 'dark';
     } else {
       document.documentElement.classList.remove('dark');
+      document.documentElement.style.backgroundColor = '#f8fafc';
+      document.body.style.backgroundColor = '#f8fafc';
+      document.documentElement.style.colorScheme = 'light';
     }
     
     // Update theme-color meta tag for mobile browser status bar
@@ -826,7 +832,7 @@ export default function App() {
   if (showSplash) return <SplashView progress={loadProgress} isDarkMode={isDarkMode} />;
   
   if (!isAuthReady) return (
-    <div className={`min-h-screen flex flex-col items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
+    <div className={`min-h-[100dvh] flex flex-col items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
       <div className={`w-12 h-12 border-4 border-t-transparent rounded-full animate-spin mb-4 ${isDarkMode ? 'border-indigo-500' : 'border-indigo-600'}`}></div>
       <p className="text-slate-400 font-black uppercase tracking-widest text-xs">Checking Auth State...</p>
     </div>
@@ -856,7 +862,7 @@ export default function App() {
   );
   
   return (
-    <div className={`min-h-screen transition-colors duration-300 flex flex-col font-sans relative ${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+    <div className={`min-h-[100dvh] transition-colors duration-300 flex flex-col font-sans relative ${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-red-600 text-white text-[10px] font-black py-1.5 px-4 text-center z-50 flex items-center justify-center gap-2 sticky top-0">
@@ -1090,7 +1096,7 @@ export default function App() {
 
 function SplashView({ progress, isDarkMode }: { progress: number, isDarkMode: boolean }) {
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
+    <div className={`min-h-[100dvh] flex flex-col items-center justify-center p-6 transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1131,7 +1137,7 @@ function BattleStartView({ player, opponent, countdown, isDarkMode, onReady, mat
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className={`min-h-[80vh] flex flex-col items-center justify-center p-6 overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-indigo-900'}`}
+      className={`min-h-[80dvh] flex flex-col items-center justify-center p-6 overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-indigo-900'}`}
     >
       <AnimatePresence mode="wait">
         {matchState?.phase === 'loading' ? (
@@ -1272,7 +1278,7 @@ function QuizView({
   }, [currentIndex, isAutoSpeechEnabled, isLoading, question, selectedPack, answerStatus]);
   if (isLoading) {
     return (
-      <div className="min-h-[80vh] flex flex-col items-center justify-center">
+      <div className="min-h-[80dvh] flex flex-col items-center justify-center">
         <motion.div 
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
@@ -2086,7 +2092,7 @@ function MatchingView({ onCancel, matchState, isDarkMode }: { onCancel: () => vo
       <motion.div 
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className={`min-h-[80vh] flex flex-col items-center justify-center p-6 text-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}
+        className={`min-h-[80dvh] flex flex-col items-center justify-center p-6 text-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}
       >
         <motion.div
           animate={{ y: [0, -10, 0] }}
@@ -2114,7 +2120,7 @@ function MatchingView({ onCancel, matchState, isDarkMode }: { onCancel: () => vo
   }
 
   return (
-    <div className={`min-h-[80vh] flex flex-col items-center justify-center p-6 transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
+    <div className={`min-h-[80dvh] flex flex-col items-center justify-center p-6 transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
       <div className="relative mb-8">
         <motion.div 
           animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
@@ -2272,7 +2278,7 @@ function FriendMatchWaitingView({ inviteCode, onCancel, matchState, player, onSt
   const canStart = (matchState?.players?.length || 0) >= 2;
 
   return (
-    <div className={`min-h-[80vh] flex flex-col items-center justify-center p-6 text-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
+    <div className={`min-h-[80dvh] flex flex-col items-center justify-center p-6 text-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
       <div className={`p-8 rounded-[3rem] shadow-2xl border transition-colors max-w-md w-full ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100 mb-8'}`}>
         <h2 className={`text-2xl font-black mb-2 uppercase tracking-tighter transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Waiting Room</h2>
         <p className="text-slate-400 font-bold text-sm mb-8">友達にこのQRコードを見せてください</p>
@@ -2724,7 +2730,7 @@ function TutorialView({ onSkip, isDarkMode }: { onSkip: () => void, isDarkMode: 
   const current = steps[step];
 
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center p-6 font-sans transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
+    <div className={`min-h-[100dvh] flex flex-col items-center justify-center p-6 font-sans transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
       <motion.div 
         key={step}
         initial={{ opacity: 0, scale: 0.9 }}
@@ -2784,7 +2790,7 @@ function SetupView({ onComplete, isMusicMuted, onToggleMute, isDarkMode, onToggl
   const [selectedIcon, setSelectedIcon] = useState('smile');
 
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
+    <div className={`min-h-[100dvh] flex flex-col items-center justify-center p-6 relative overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
       {/* Offline Banner for Setup */}
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-[10px] font-black py-1.5 px-4 text-center z-50 flex items-center justify-center gap-2">
