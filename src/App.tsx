@@ -331,6 +331,15 @@ export default function App() {
     } else {
       document.documentElement.classList.remove('dark');
     }
+    
+    // Update theme-color meta tag for mobile browser status bar
+    let metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (!metaThemeColor) {
+      metaThemeColor = document.createElement('meta');
+      metaThemeColor.setAttribute('name', 'theme-color');
+      document.head.appendChild(metaThemeColor);
+    }
+    metaThemeColor.setAttribute('content', isDarkMode ? '#020617' : '#f8fafc');
   }, [isDarkMode]);
 
   // --- Player Setup ---
@@ -817,8 +826,8 @@ export default function App() {
   if (showSplash) return <SplashView progress={loadProgress} isDarkMode={isDarkMode} />;
   
   if (!isAuthReady) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-white">
-      <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+    <div className={`min-h-screen flex flex-col items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
+      <div className={`w-12 h-12 border-4 border-t-transparent rounded-full animate-spin mb-4 ${isDarkMode ? 'border-indigo-500' : 'border-indigo-600'}`}></div>
       <p className="text-slate-400 font-black uppercase tracking-widest text-xs">Checking Auth State...</p>
     </div>
   );
@@ -837,6 +846,7 @@ export default function App() {
   );
   if (view === 'tutorial') return (
     <TutorialView 
+      isDarkMode={isDarkMode}
       onSkip={() => {
         localStorage.setItem('pokepoke_tutorial_seen', 'true');
         setHasSeenTutorial(true);
@@ -935,6 +945,7 @@ export default function App() {
           )}
           {view === 'suggestion' && (
             <SuggestionFormView 
+              isDarkMode={isDarkMode}
               onSubmit={handleSuggestionSubmit}
               onBack={() => setView('home')}
             />
@@ -1833,7 +1844,7 @@ function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriend
         })}
         
         {PACKS.length === 0 && (
-          <div className="w-full py-20 flex flex-col items-center justify-center bg-white rounded-[2.5rem] border-2 border-dashed border-slate-200">
+          <div className={`w-full py-20 flex flex-col items-center justify-center rounded-[2.5rem] border-2 border-dashed transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
             <Rocket className="w-12 h-12 text-slate-300 mb-4" />
             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No packs available</p>
           </div>
@@ -1867,7 +1878,7 @@ function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriend
   );
 }
 
-function SuggestionFormView({ onSubmit, onBack }: { onSubmit: (type: string, content: string) => void, onBack: () => void }) {
+function SuggestionFormView({ onSubmit, onBack, isDarkMode }: { onSubmit: (type: string, content: string) => void, onBack: () => void, isDarkMode: boolean }) {
   const [type, setType] = useState('suggestion');
   const [content, setContent] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -1903,27 +1914,27 @@ function SuggestionFormView({ onSubmit, onBack }: { onSubmit: (type: string, con
       animate={{ y: 0, opacity: 1 }}
       className="p-6 max-w-2xl mx-auto w-full"
     >
-      <button onClick={onBack} className="mb-8 flex items-center gap-2 text-slate-400 font-black uppercase text-xs tracking-widest hover:text-slate-900 transition-colors">
+      <button onClick={onBack} className={`mb-8 flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-900'}`}>
         <ChevronLeft className="w-5 h-5" /> Back
       </button>
 
-      <div className="bg-white rounded-[2.5rem] p-8 shadow-2xl border border-slate-100">
-        <h2 className="text-3xl font-black text-slate-900 mb-2 tracking-tighter uppercase">提案・報告</h2>
-        <p className="text-slate-400 font-bold text-[10px] mb-8 uppercase tracking-widest">Contact: nishikidootama@gmail.com</p>
+      <div className={`rounded-[2.5rem] p-8 shadow-2xl border transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
+        <h2 className={`text-3xl font-black mb-2 tracking-tighter uppercase ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>提案・報告</h2>
+        <p className={`font-bold text-[10px] mb-8 uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Contact: nishikidootama@gmail.com</p>
         
         <div className="space-y-6">
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">種別</label>
+            <label className={`block text-sm font-bold mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>種別</label>
             <div className="flex flex-wrap gap-2">
               <button 
                 onClick={() => { setType('suggestion'); setError(null); }}
-                className={`flex-1 min-w-[100px] py-3 rounded-xl font-bold transition-all ${type === 'suggestion' ? 'bg-indigo-600 text-white' : 'bg-slate-50 text-slate-500'}`}
+                className={`flex-1 min-w-[100px] py-3 rounded-xl font-bold transition-all ${type === 'suggestion' ? 'bg-indigo-600 text-white' : (isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-500')}`}
               >
                 提案
               </button>
               <button 
                 onClick={() => { setType('report'); setError(null); }}
-                className={`flex-1 min-w-[100px] py-3 rounded-xl font-bold transition-all ${type === 'report' ? 'bg-red-600 text-white' : 'bg-slate-50 text-slate-500'}`}
+                className={`flex-1 min-w-[100px] py-3 rounded-xl font-bold transition-all ${type === 'report' ? 'bg-red-600 text-white' : (isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-500')}`}
               >
                 報告
               </button>
@@ -1931,13 +1942,13 @@ function SuggestionFormView({ onSubmit, onBack }: { onSubmit: (type: string, con
           </div>
 
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">内容</label>
+            <label className={`block text-sm font-bold mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>内容</label>
             <textarea 
               value={content}
               onChange={(e) => { setContent(e.target.value); setError(null); }}
               placeholder="こちらに内容を入力してください"
               rows={5}
-              className="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all font-bold resize-none"
+              className={`w-full px-4 py-3 rounded-xl border-2 outline-none transition-all font-bold resize-none ${isDarkMode ? 'bg-slate-800 border-slate-700 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'}`}
             />
           </div>
 
@@ -2681,7 +2692,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   );
 }
 
-function TutorialView({ onSkip }: { onSkip: () => void }) {
+function TutorialView({ onSkip, isDarkMode }: { onSkip: () => void, isDarkMode: boolean }) {
   const [step, setStep] = useState(0);
   const steps = [
     {
@@ -2713,19 +2724,19 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
   const current = steps[step];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 font-sans">
+    <div className={`min-h-screen flex flex-col items-center justify-center p-6 font-sans transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-slate-50'}`}>
       <motion.div 
         key={step}
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md bg-white rounded-[3rem] p-12 shadow-2xl border border-slate-100 text-center relative overflow-hidden"
+        className={`w-full max-w-md rounded-[3rem] p-12 shadow-2xl border relative overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'} text-center`}
       >
         <div className={`w-24 h-24 ${current.color} rounded-[2rem] flex items-center justify-center mx-auto mb-8 shadow-lg`}>
           <current.icon className="w-12 h-12 text-white" />
         </div>
         
-        <h2 className="text-3xl font-black text-slate-900 mb-4 tracking-tighter uppercase">{current.title}</h2>
-        <p className="text-slate-500 font-bold leading-relaxed mb-12">{current.desc}</p>
+        <h2 className={`text-3xl font-black mb-4 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{current.title}</h2>
+        <p className={`font-bold leading-relaxed mb-12 transition-colors ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{current.desc}</p>
 
         <div className="flex flex-col gap-4">
           <button 
@@ -2739,7 +2750,7 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
           </button>
           <button 
             onClick={onSkip}
-            className="text-slate-400 font-black text-sm uppercase tracking-widest hover:text-slate-600 transition-colors"
+            className={`font-black text-sm uppercase tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}
           >
             チュートリアルをスキップ
           </button>
@@ -2750,7 +2761,7 @@ function TutorialView({ onSkip }: { onSkip: () => void }) {
           {steps.map((_, i) => (
             <div 
               key={i} 
-              className={`h-2 rounded-full transition-all duration-300 ${i === step ? 'w-8 bg-indigo-600' : 'w-2 bg-slate-200'}`} 
+              className={`h-2 rounded-full transition-all duration-300 ${i === step ? 'w-8 bg-indigo-600' : (isDarkMode ? 'w-2 bg-slate-800' : 'w-2 bg-slate-200')}`} 
             />
           ))}
         </div>

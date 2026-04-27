@@ -8,8 +8,11 @@
 }
 
 @layer base {
-  body {
-    @apply font-sans bg-slate-50 text-slate-900;
+  html, body {
+    @apply font-sans bg-slate-50 text-slate-900 transition-colors duration-300;
+  }
+  .dark html, .dark body {
+    @apply bg-slate-950 text-slate-100;
   }
 }
 
