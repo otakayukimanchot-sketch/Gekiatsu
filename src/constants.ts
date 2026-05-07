@@ -22,8 +22,18 @@ import { TOEIC_OVERLORD_WORDS } from './data/toeicOverlord.ts';
 import { TOEIC_LISTENING_WORDS } from './data/listening.ts';
 import { TOEIC_LISTENING_KAI_WORDS } from './data/listening_kai.ts';
 import { TOEIC_PATTERN_WORDS } from './data/toeicPattern.ts';
+import { KOREAN_TOPIK2_WORDS } from './data/koreanTopik2.ts';
 
 export const PACKS: Pack[] = [
+  // --- 韓国語 ---
+  {
+    id: 'korean-topik2',
+    name: '韓国語TOPIK 2級頻出語',
+    description: 'TOPIK 2級に合格するための重要語彙100語。基本をしっかり固めよう。',
+    category: '韓国語',
+    color: 'bg-gradient-to-br from-red-500 via-white to-blue-500',
+    words: KOREAN_TOPIK2_WORDS,
+  },
   // --- TOEIC ---
   {
     id: 'toeic-gold',
