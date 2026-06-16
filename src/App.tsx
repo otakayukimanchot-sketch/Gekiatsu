@@ -714,7 +714,7 @@ export default function App() {
         setWrongCount(prev => prev + 1);
         playSound('wrong');
       }
-      setTimeout(handleNextQuestion, 2000);
+      setTimeout(handleNextQuestion, 1000);
     }
   };
 

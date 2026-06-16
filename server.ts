@@ -155,7 +155,7 @@ async function startServer() {
 
     setTimeout(() => {
       startNextRound(roomId);
-    }, 1500); // 1.5s wait as requested
+    }, 1000); // 1.0s wait is shorter and feels snappier
   };
 
   const startCountdown = (roomId: string) => {
