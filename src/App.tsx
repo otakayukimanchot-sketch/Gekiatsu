@@ -58,6 +58,7 @@ export default function App() {
   const [listeningCountdown, setListeningCountdown] = useState<number | null>(null);
   const [audioPlayed, setAudioPlayed] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   const isPlayingAudioRef = useRef(false);
   const fetchInProgressRef = useRef(false);
   
@@ -894,6 +895,18 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-2 md:gap-4">
+          {(view === 'training' || view === 'battle') && (
+            <button 
+              onClick={() => {
+                playSound('click');
+                setShowQuitConfirm(true);
+              }}
+              className="p-2 transition-colors text-red-500 hover:text-red-650"
+              title="Stop/Exit"
+            >
+              <LogOut className="w-5 h-5 -scale-x-100" />
+            </button>
+          )}
           <button 
             onClick={() => setView('tutorial')}
             className={`p-2 transition-colors ${isDarkMode ? 'text-slate-500 hover:text-indigo-400' : 'text-slate-400 hover:text-indigo-600'}`}
@@ -1088,6 +1101,50 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* Quit Confirmation Overlay */}
+      {showQuitConfirm && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center z-[150] p-4">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className={`w-full max-w-sm rounded-[2rem] p-8 shadow-2xl border text-center relative overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}
+          >
+            {/* Subtle aesthetic accent bar */}
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-red-500" />
+
+            <h3 className={`text-xl font-black mb-6 mt-2 tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+              Are you sure you want to quit?
+            </h3>
+            
+            <div className="flex gap-4 justify-center">
+              <button
+                onClick={() => {
+                  playSound('click');
+                  setShowQuitConfirm(false);
+                  handleQuit();
+                }}
+                className="flex-1 py-4 px-6 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl shadow-lg shadow-red-500/10 active:scale-95 transition-all text-base cursor-pointer"
+              >
+                Yes
+              </button>
+              <button
+                onClick={() => {
+                  playSound('click');
+                  setShowQuitConfirm(false);
+                }}
+                className={`flex-1 py-4 px-6 font-black rounded-xl border-2 transition-all active:scale-95 text-base cursor-pointer ${
+                  isDarkMode 
+                    ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' 
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                No
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2637,6 +2694,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
           >
             <Play className="w-6 h-6" /> {mode === 'battle' ? 'NEW MATCH' : 'TRY AGAIN'}
           </button>
+          
           <button
             onClick={() => { playSound('click'); onHome(); }}
             className={`w-full py-5 rounded-2xl font-black text-xl border-2 transition-all active:scale-95 flex items-center justify-center gap-2 ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50'}`}
@@ -2653,20 +2711,8 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
               : (isDarkMode ? 'bg-amber-950/20 border-amber-900 text-amber-500 hover:bg-amber-950/40' : 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100')
             }`}
           >
-            {isSaved ? <Check className="w-6 h-6" /> : <Star className={`w-6 h-6 ${isSaved ? 'fill-amber-600' : ''}`} />}
-            {isSaved ? 'SAVED TO WRONG QUESTIONS!' : 'KEEP WRONG QUESTIONS'}
-          </button>
-
-          <button
-            onClick={() => { playSound('click'); handleShare(); }}
-            className={`w-full py-5 rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center gap-2 border-2 ${
-              isCopied 
-              ? (isDarkMode ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400' : 'bg-emerald-50 border-emerald-500 text-emerald-600')
-              : (isDarkMode ? 'bg-indigo-950/20 border-indigo-900 text-indigo-400 hover:bg-indigo-950/40' : 'bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100')
-            }`}
-          >
-            {isCopied ? <Check className="w-6 h-6" /> : <Share2 className="w-6 h-6" />}
-            {isCopied ? 'COPIED TO CLIPBOARD!' : 'SHARE WRONG QUESTIONS'}
+            {isSaved ? <Check className="w-6 h-6" /> : <Star className="w-6 h-6" />}
+            {isSaved ? 'SAVED TO MY LIST!' : 'SAVE MISTAKES'}
           </button>
         </div>
 
@@ -2700,6 +2746,7 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
 
 function TutorialView({ onSkip, isDarkMode }: { onSkip: () => void, isDarkMode: boolean }) {
   const [step, setStep] = useState(0);
+  const [shared, setShared] = useState(false);
   const steps = [
     {
       title: "激アツ英単語へようこそ！",
@@ -2747,16 +2794,17 @@ function TutorialView({ onSkip, isDarkMode }: { onSkip: () => void, isDarkMode: 
         <div className="flex flex-col gap-4">
           <button 
             onClick={() => {
+              playSound('click');
               if (step < steps.length - 1) setStep(step + 1);
               else onSkip();
             }}
-            className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95"
+            className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 cursor-pointer"
           >
             {step === steps.length - 1 ? 'スタート！' : '次へ'}
           </button>
           <button 
-            onClick={onSkip}
-            className={`font-black text-sm uppercase tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}
+            onClick={() => { playSound('click'); onSkip(); }}
+            className={`font-black text-sm uppercase tracking-widest transition-colors cursor-pointer ${isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}
           >
             チュートリアルをスキップ
           </button>
@@ -2770,6 +2818,37 @@ function TutorialView({ onSkip, isDarkMode }: { onSkip: () => void, isDarkMode: 
               className={`h-2 rounded-full transition-all duration-300 ${i === step ? 'w-8 bg-indigo-600' : (isDarkMode ? 'w-2 bg-slate-800' : 'w-2 bg-slate-200')}`} 
             />
           ))}
+        </div>
+
+        {/* Sharing Section */}
+        <div className={`mt-8 pt-6 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'} flex flex-col items-center gap-4`}>
+          <div className="flex items-center gap-2 justify-center flex-wrap">
+            <span className={`text-xs font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>アプリをシェア:</span>
+            <a 
+              href="https://gekiatsu.vercel.app/" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-xs font-black text-indigo-500 hover:text-indigo-600 underline break-all"
+            >
+              https://gekiatsu.vercel.app/
+            </a>
+          </div>
+          <button
+            onClick={() => {
+              playSound('click');
+              navigator.clipboard.writeText("https://gekiatsu.vercel.app/");
+              setShared(true);
+              setTimeout(() => setShared(false), 2000);
+            }}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl border transition-all cursor-pointer ${
+              shared 
+                ? 'bg-emerald-500 border-emerald-500 text-white shadow-lg' 
+                : (isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100')
+            }`}
+          >
+            <Share2 className="w-4 h-4" />
+            <span className="text-xs font-black uppercase tracking-wider">{shared ? 'リンクをコピーしました！' : 'シェアリンクをコピー'}</span>
+          </button>
         </div>
       </motion.div>
     </div>
