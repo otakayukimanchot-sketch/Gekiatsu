@@ -39,7 +39,7 @@ export interface PlayerState extends Player {
 
 export interface MatchRoomState {
   roomId: string;
-  type: 'battle' | 'friend';
+  type: 'battle' | 'friend' | 'group';
   players: PlayerState[];
   packId: string;
   questionCount: number;

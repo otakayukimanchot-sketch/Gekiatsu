@@ -1082,6 +1082,13 @@ export default function App() {
                 setView('matching');
                 socketRef.current?.emit('join_match', { packId: pack.id, questionCount: count, player });
               }}
+              onStartGroupBattle={(pack) => {
+                playSound('click');
+                setSelectedPack(pack);
+                setQuestionCount(50); // Set high count since group match is score-based up to 100
+                setView('matching');
+                socketRef.current?.emit('join_group_match', { packId: pack.id, player });
+              }}
               onFriendMatch={() => {
                 playSound('click');
                 setView('friend_match_setup');
@@ -1178,7 +1185,7 @@ export default function App() {
             <BattleStartView 
               player={player!} 
               isDarkMode={isDarkMode}
-              opponent={matchState?.players?.find(p => p.id !== player?.id)!} 
+              opponent={matchState?.players?.find(p => p.id !== player?.id) || player!} 
               countdown={countdown}
               onReady={() => socketRef.current?.emit('player_ready', { roomId: matchState?.roomId })}
               matchState={matchState}
@@ -1196,6 +1203,9 @@ export default function App() {
               answerStatus={answerStatus}
               selectedChoice={selectedChoice}
               onAnswer={handleAnswer}
+              onBuzzIn={() => {
+                socketRef.current?.emit('buzz_in', { roomId: matchState?.roomId });
+              }}
               opponent={view === 'battle' ? opponent : undefined}
               opponentAnswer={opponentAnswer}
               player={player}
@@ -1337,8 +1347,73 @@ function BattleStartView({ player, opponent, countdown, isDarkMode, onReady, mat
     }
   }, [matchState?.phase]);
 
-  const opponentState = matchState?.players?.find(p => p.id === opponent.id);
+  const opponentState = matchState?.players?.find(p => p.id === opponent?.id);
   const isOpponentReady = !!opponentState?.isReady;
+
+  if (matchState?.type === 'group') {
+    return (
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className={`min-h-[80dvh] flex flex-col items-center justify-center p-6 overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-indigo-900'}`}
+      >
+        <AnimatePresence mode="wait">
+          {matchState.phase === 'loading' ? (
+            <motion.div
+              key="loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex flex-col items-center"
+            >
+              <div className={`w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mb-6 ${isDarkMode ? 'border-indigo-500' : 'border-indigo-300'}`}></div>
+              <p className="text-white font-black text-2xl uppercase tracking-widest italic">Extracting Questions...</p>
+            </motion.div>
+          ) : countdown !== null ? (
+            <motion.div
+              key="countdown"
+              initial={{ scale: 2, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              className="text-9xl font-black text-white italic animate-bounce"
+            >
+              {countdown === 0 ? 'START!' : countdown}
+            </motion.div>
+          ) : (
+            <div className="flex flex-col items-center w-full">
+              <motion.div
+                initial={{ y: -20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                className="text-center mb-8"
+              >
+                <h2 className="text-5xl font-black text-white tracking-tighter mb-2 uppercase italic animate-pulse">
+                  対戦開始！ (GROUP MATCH)
+                </h2>
+                <div className="h-1 w-24 bg-red-500 mx-auto rounded-full mb-4"></div>
+                <p className="text-indigo-200 font-bold">メンバーがマッチしました。100点先取の早押しクイズ開始まであと数秒...！</p>
+              </motion.div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-12 w-full max-w-lg">
+                {matchState.players.map((p, idx) => (
+                  <motion.div 
+                    key={p.id}
+                    initial={{ scale: 0, rotate: -15 }}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: "spring", delay: idx * 0.1 }}
+                    className="flex flex-col items-center gap-3 p-4 rounded-3xl bg-white/10 border border-white/20 backdrop-blur-sm"
+                  >
+                    <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center text-3xl shadow-lg">
+                      {p.icon}
+                    </div>
+                    <p className="text-white font-black text-sm truncate max-w-[100px]">{p.name}</p>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div 
@@ -1455,13 +1530,14 @@ function BattleStartView({ player, opponent, countdown, isDarkMode, onReady, mat
 
 function QuizView({ 
   mode, isLoading, isDarkMode, currentIndex, total, question, timeLeft, 
-  answerStatus, selectedChoice, onAnswer, opponent, opponentAnswer,
+  answerStatus, selectedChoice, onAnswer, onBuzzIn, opponent, opponentAnswer,
   player, score, opponentScore, matchState, listeningCountdown, selectedPack,
   isAutoSpeechEnabled, onToggleAutoSpeech, playAudio
 }: { 
   mode: 'training' | 'battle', isLoading: boolean, isDarkMode: boolean, currentIndex: number, total: number, 
   question: Word, timeLeft: number, answerStatus: string, 
   selectedChoice: string | null, onAnswer: (choice: string | null) => void,
+  onBuzzIn?: () => void,
   opponent?: Player, opponentAnswer?: any,
   player?: Player | null, score: number, opponentScore: number,
   matchState?: MatchRoomState | null,
@@ -1498,9 +1574,14 @@ function QuizView({
 
   if (!question) return null;
 
-  const isAnswerLocked = matchState?.phase === 'answering';
+  const isGroup = matchState?.type === 'group';
+  const isAnswerLocked = isGroup 
+    ? (matchState?.phase !== 'answering' || matchState?.firstResponder !== player?.id)
+    : (matchState?.phase === 'answering');
   const myState = matchState?.players?.find(p => p.id === player?.id);
-  const isMyTurn = mode === 'training' || (matchState?.phase === 'question' && !myState?.answered);
+  const isMyTurn = mode === 'training' || (isGroup 
+    ? (matchState?.phase === 'answering' && matchState?.firstResponder === player?.id)
+    : (matchState?.phase === 'question' && !myState?.answered));
 
   const isListening = selectedPack?.type === 'listening';
   const showCountdown = isListening && listeningCountdown !== null;
@@ -1576,7 +1657,36 @@ function QuizView({
         </div>
       </div>
 
-      {mode === 'battle' && opponent && (
+      {mode === 'battle' && matchState?.type === 'group' ? (
+        <div className="flex flex-col gap-2 mb-4">
+          <div className="flex flex-wrap gap-2 justify-center py-2 px-2 rounded-3xl bg-slate-100/50 dark:bg-slate-900/50 border border-slate-200/40 dark:border-slate-800/40">
+            {matchState.players.map((p) => {
+              const isMe = p.id === player?.id;
+              const isBuzzed = matchState.phase === 'answering' && matchState.firstResponder === p.id;
+              return (
+                <div 
+                  key={p.id} 
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border transition-all ${
+                    isBuzzed 
+                      ? 'bg-red-500 border-red-600 text-white shadow-lg scale-105 ring-2 ring-red-300' 
+                      : isMe 
+                        ? 'bg-indigo-100 border-indigo-200 dark:bg-indigo-950 dark:border-indigo-900 text-indigo-900 dark:text-indigo-100' 
+                        : 'bg-white border-slate-100 dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-200'
+                  }`}
+                >
+                  <span className="text-sm">{p.icon}</span>
+                  <div className="text-left leading-none">
+                    <p className="text-[9px] font-bold uppercase tracking-tight truncate max-w-[55px] opacity-70">
+                      {isMe ? 'YOU' : p.name}
+                    </p>
+                    <p className="text-xs font-black">{p.score} pt</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : mode === 'battle' && opponent ? (
         <div className="flex flex-col gap-2 mb-4">
           <div className="flex justify-between items-center px-2">
             <div className="flex items-center gap-2">
@@ -1642,7 +1752,7 @@ function QuizView({
             )}
           </div>
         </div>
-      )}
+      ) : null}
 
       <motion.div 
         key={currentIndex}
@@ -1820,61 +1930,88 @@ function QuizView({
         </AnimatePresence>
       </motion.div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {question.choices.map((choice, idx) => {
-          const isSelected = selectedChoice === choice;
-          const isCorrect = choice === question.meaning;
-          const isOpponentSelected = opponentAnswer?.playerId !== undefined && opponentAnswer.isCorrect && choice === question.meaning;
-          
-          let bgColor = isDarkMode ? 'bg-slate-900' : 'bg-white';
-          let borderColor = isDarkMode ? 'border-slate-800' : 'border-slate-200';
-          let textColor = isDarkMode ? 'text-white' : 'text-slate-800';
+      {isGroup && matchState?.phase === 'question' ? (
+        <div className="flex flex-col items-center justify-center py-12">
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={() => {
+              playSound('click');
+              if (onBuzzIn) onBuzzIn();
+            }}
+            className="w-48 h-48 rounded-full bg-gradient-to-r from-red-500 to-rose-600 border-b-8 border-red-700 hover:from-red-600 hover:to-rose-700 text-white font-black text-4xl flex items-center justify-center shadow-2xl animate-pulse cursor-pointer select-none active:border-b-0 active:translate-y-2 transition-all focus:outline-none ring-4 ring-red-300"
+          >
+            早押し!
+          </motion.button>
+          <p className="mt-6 text-slate-400 font-bold uppercase tracking-widest text-xs animate-bounce">一番早くボタンを押した人が解答権を獲得！</p>
+        </div>
+      ) : (
+        <>
+          {isGroup && matchState?.phase === 'answering' && matchState?.firstResponder !== player?.id && (
+            <div className="mb-4 p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900 text-indigo-900 dark:text-indigo-200 text-center font-bold">
+              📣 {matchState?.players?.find(p => p.id === matchState.firstResponder)?.name || '誰か'} が早押し成功！解答権を獲得しました。解答を待っています...
+            </div>
+          )}
+          {isGroup && matchState?.phase === 'answering' && matchState?.firstResponder === player?.id && (
+            <div className="mb-4 p-4 rounded-2xl bg-emerald-500 border border-emerald-600 text-white text-center font-black animate-pulse shadow-md">
+              👑 あなたが早押し成功！10秒以内に解答を選択してください！
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-4">
+            {question.choices.map((choice, idx) => {
+              const isSelected = selectedChoice === choice;
+              const isCorrect = choice === question.meaning;
+              
+              let bgColor = isDarkMode ? 'bg-slate-900' : 'bg-white';
+              let borderColor = isDarkMode ? 'border-slate-800' : 'border-slate-200';
+              let textColor = isDarkMode ? 'text-white' : 'text-slate-800';
 
-          if (answerStatus !== 'idle' || matchState?.phase === 'result') {
-            if (isCorrect) {
-              bgColor = 'bg-emerald-500';
-              borderColor = 'border-emerald-600';
-              textColor = 'text-white';
-            } else if (isSelected) {
-              bgColor = 'bg-red-500';
-              borderColor = 'border-red-600';
-              textColor = 'text-white';
-            } else {
-              if (isDarkMode) {
-                bgColor = 'bg-slate-950/40';
-                textColor = 'text-slate-700';
-                borderColor = 'border-slate-900';
+              if (answerStatus !== 'idle' || matchState?.phase === 'result') {
+                if (isCorrect) {
+                  bgColor = 'bg-emerald-500';
+                  borderColor = 'border-emerald-600';
+                  textColor = 'text-white';
+                } else if (isSelected) {
+                  bgColor = 'bg-red-500';
+                  borderColor = 'border-red-600';
+                  textColor = 'text-white';
+                } else {
+                  if (isDarkMode) {
+                    bgColor = 'bg-slate-950/40';
+                    textColor = 'text-slate-700';
+                    borderColor = 'border-slate-900';
+                  } else {
+                    bgColor = 'bg-slate-50';
+                    textColor = 'text-slate-300';
+                    borderColor = 'border-slate-100';
+                  }
+                }
               } else {
-                bgColor = 'bg-slate-50';
-                textColor = 'text-slate-300';
-                borderColor = 'border-slate-100';
+                if (isSelected) {
+                  bgColor = 'bg-indigo-600';
+                  borderColor = 'border-indigo-700';
+                  textColor = 'text-white';
+                }
               }
-            }
-          } else {
-            if (isSelected) {
-              bgColor = 'bg-indigo-600';
-              borderColor = 'border-indigo-700';
-              textColor = 'text-white';
-            }
-          }
 
-          return (
-            <motion.button
-              key={idx}
-              whileTap={{ scale: 0.98 }}
-              disabled={!isMyTurn || isAnswerLocked}
-              onClick={() => { playSound('click'); onAnswer(choice); }}
-              className={`w-full py-3 md:py-6 px-4 md:px-8 rounded-2xl md:rounded-3xl border-b-4 ${borderColor} ${bgColor} ${textColor} font-black ${getChoiceFontSize(choice)} text-left transition-all flex justify-between items-center shadow-lg active:translate-y-1 active:border-b-0`}
-            >
-              <span>{choice}</span>
-              <div className="flex gap-2">
-                {(answerStatus !== 'idle' || matchState?.phase === 'result') && isCorrect && <CheckCircle2 className="w-8 h-8" />}
-                {(answerStatus !== 'idle' || matchState?.phase === 'result') && isSelected && !isCorrect && <XCircle className="w-8 h-8" />}
-              </div>
-            </motion.button>
-          );
-        })}
-      </div>
+              return (
+                <motion.button
+                  key={idx}
+                  whileTap={{ scale: 0.98 }}
+                  disabled={!isMyTurn || isAnswerLocked}
+                  onClick={() => { playSound('click'); onAnswer(choice); }}
+                  className={`w-full py-3 md:py-6 px-4 md:px-8 rounded-2xl md:rounded-3xl border-b-4 ${borderColor} ${bgColor} ${textColor} font-black ${getChoiceFontSize(choice)} text-left transition-all flex justify-between items-center shadow-lg active:translate-y-1 active:border-b-0`}
+                >
+                  <span>{choice}</span>
+                  <div className="flex gap-2">
+                    {(answerStatus !== 'idle' || matchState?.phase === 'result') && isCorrect && <CheckCircle2 className="w-8 h-8" />}
+                    {(answerStatus !== 'idle' || matchState?.phase === 'result') && isSelected && !isCorrect && <XCircle className="w-8 h-8" />}
+                  </div>
+                </motion.button>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -2309,6 +2446,54 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack, isDa
 }
 
 function MatchingView({ onCancel, matchState, isDarkMode }: { onCancel: () => void, matchState?: MatchRoomState | null, isDarkMode: boolean }) {
+  if (matchState?.type === 'group') {
+    return (
+      <motion.div 
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className={`min-h-[80dvh] flex flex-col items-center justify-center p-6 text-center transition-colors ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}
+      >
+        <motion.div
+          animate={{ y: [0, -10, 0] }}
+          transition={{ repeat: Infinity, duration: 1 }}
+          className="mb-8"
+        >
+          <h2 className="text-4xl font-black text-indigo-600 tracking-tighter uppercase italic">「みんなで対戦」マッチング中</h2>
+          <p className="text-slate-400 font-bold mt-2">メンバーが集まるまでしばらくお待ちください (3〜8人)</p>
+        </motion.div>
+
+        {matchState.countdown !== null && matchState.countdown !== undefined && (
+          <div className="mb-8 p-4 bg-red-500 text-white font-black text-xl rounded-2xl animate-pulse inline-block">
+            🔔 最小人数(3人)を突破！あと {matchState.countdown} 秒でゲームが開始します！
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8 w-full max-w-lg">
+          {matchState.players.map((p) => (
+            <div key={p.id} className={`flex flex-col items-center gap-2 p-4 rounded-3xl border-2 transition-all ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+              <div className="text-3xl">{p.icon}</div>
+              <p className={`font-black uppercase text-xs truncate max-w-[100px] transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-900'}`}>{p.name}</p>
+              <span className="text-[10px] bg-indigo-100 text-indigo-600 font-black px-2 py-0.5 rounded-full">CONNECTED</span>
+            </div>
+          ))}
+          {Array.from({ length: Math.max(0, 8 - matchState.players.length) }).map((_, i) => (
+            <div key={i} className={`flex flex-col items-center justify-center gap-2 p-4 rounded-3xl border-2 border-dashed border-slate-300 min-h-[100px] opacity-40`}>
+              <Users className="w-8 h-8 text-slate-400 animate-pulse" />
+              <p className="text-[10px] text-slate-400 font-bold">空きスロット</p>
+            </div>
+          ))}
+        </div>
+
+        <button 
+          onClick={onCancel}
+          className={`px-8 py-3 rounded-xl font-bold transition-all ${isDarkMode ? 'bg-slate-900 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+        >
+          キャンセル
+        </button>
+      </motion.div>
+    );
+  }
+
   if (matchState?.players?.length === 2) {
     return (
       <motion.div 
@@ -2686,6 +2871,13 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   onSaveWrongQuestions: (words: Word[]) => void,
   isDarkMode: boolean
 }) {
+  const isGroup = matchState?.type === 'group';
+  const sortedPlayers = isGroup 
+    ? [...(matchState?.players || [])].sort((a, b) => b.score - a.score)
+    : [];
+  const myRankIndex = sortedPlayers.findIndex(p => p.id === player?.id);
+  const myRank = myRankIndex !== -1 ? myRankIndex + 1 : 1;
+
   const isWin = mode === 'battle' ? (opponentScore !== undefined && score > opponentScore) : true;
   const isDraw = mode === 'battle' && opponentScore !== undefined && score === opponentScore;
   const accuracy = total > 0 ? Math.round((score / total) * 100) : 0;
@@ -2778,52 +2970,102 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
       <div className={`rounded-[3rem] p-8 md:p-12 shadow-2xl border text-center relative overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
         {mode === 'battle' ? (
           <>
-            {/* Top Section: Scores */}
-            <div className="flex justify-between items-center mb-12 px-4">
-              <div className="flex flex-col items-center gap-2">
-                <div className="text-5xl font-black text-indigo-600">{score}</div>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Your Score</div>
-              </div>
-              <div className={`h-12 w-px transition-colors ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}></div>
-              <div className="flex flex-col items-center gap-2">
-                <div className="text-5xl font-black text-red-600">{opponentScore ?? 0}</div>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opponent</div>
-              </div>
-            </div>
-
-            {/* Middle Section: Icons and WIN/LOSE */}
-            <div className="flex items-center justify-center gap-8 md:gap-16 mb-8">
-              {/* Player */}
-              <div className="flex flex-col items-center gap-4">
-                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative transition-colors ${isWin && !isDraw ? (isDarkMode ? 'bg-emerald-950/30 ring-4 ring-emerald-500' : 'bg-emerald-50 ring-4 ring-emerald-500') : (isDarkMode ? 'bg-slate-800' : 'bg-slate-50')}`}>
-                  {player && React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: `w-12 h-12 ${isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
-                  {isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
+            {isGroup ? (
+              <>
+                {/* Group Leaderboard Ranking */}
+                <div className="mb-8 text-center">
+                  <div className={`inline-flex items-center gap-2 px-6 py-2 rounded-full font-black uppercase tracking-widest text-sm mb-4 transition-colors ${isDarkMode ? 'bg-indigo-950/40 text-indigo-400' : 'bg-indigo-50 text-indigo-600'}`}>
+                    <Trophy className="w-5 h-5 animate-bounce" /> 対戦結果 (RANKING)
+                  </div>
+                  <h2 className={`text-4xl font-black tracking-tighter mb-2 transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                    あなたの順位: <span className="text-indigo-600 text-5xl">{myRank}</span> / {sortedPlayers.length}位
+                  </h2>
+                  <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Final Standings</p>
                 </div>
-                <div className={`font-black text-2xl italic uppercase tracking-tighter ${isWin && !isDraw ? 'text-emerald-600' : isDraw ? 'text-indigo-600' : 'text-slate-400'}`}>
-                  {isDraw ? 'DRAW' : isWin ? 'WIN' : 'LOSE'}
-                </div>
-              </div>
 
-              <div className={`text-4xl font-black italic transition-colors ${isDarkMode ? 'text-slate-800' : 'text-slate-200'}`}>VS</div>
-
-              {/* Opponent */}
-              <div className="flex flex-col items-center gap-4">
-                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative transition-colors ${!isWin && !isDraw ? (isDarkMode ? 'bg-emerald-950/30 ring-4 ring-emerald-500' : 'bg-emerald-50 ring-4 ring-emerald-500') : (isDarkMode ? 'bg-slate-800' : 'bg-slate-50')}`}>
-                  {opponent && React.createElement(PLAYER_ICONS.find(i => i.id === opponent.icon)?.icon || Smile, { className: `w-12 h-12 ${!isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
-                  {!isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
+                <div className="space-y-3 mb-8">
+                  {sortedPlayers.map((p, idx) => {
+                    const isMe = p.id === player?.id;
+                    const medal = idx === 0 ? '👑 1位' : idx === 1 ? '🥈 2位' : idx === 2 ? '🥉 3位' : `${idx + 1}位`;
+                    const medalColor = idx === 0 ? 'text-yellow-500 font-black' : idx === 1 ? 'text-slate-400' : idx === 2 ? 'text-amber-600' : 'text-slate-400';
+                    return (
+                      <div 
+                        key={p.id} 
+                        className={`flex items-center justify-between p-4 rounded-3xl border-2 transition-all ${
+                          isMe 
+                            ? 'bg-indigo-50 border-indigo-500 dark:bg-indigo-950/30 dark:border-indigo-800 ring-2 ring-indigo-300' 
+                            : (isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100')
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className={`text-lg font-black ${medalColor} w-12 text-left`}>{medal}</div>
+                          <div className="text-3xl">{p.icon}</div>
+                          <div className="text-left">
+                            <p className={`font-black text-sm leading-none mb-1 ${isMe ? 'text-indigo-600' : (isDarkMode ? 'text-white' : 'text-slate-900')}`}>
+                              {p.name} {isMe && '(YOU)'}
+                            </p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase">SCORE</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-2xl font-black text-indigo-600">{p.score}</span>
+                          <span className="text-[10px] text-slate-400 font-bold ml-1">pts</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className={`font-black text-2xl italic uppercase tracking-tighter ${!isWin && !isDraw ? 'text-emerald-600' : isDraw ? 'text-indigo-600' : 'text-slate-400'}`}>
-                  {isDraw ? 'DRAW' : !isWin ? 'WIN' : 'LOSE'}
+              </>
+            ) : (
+              <>
+                {/* Top Section: Scores */}
+                <div className="flex justify-between items-center mb-12 px-4">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="text-5xl font-black text-indigo-600">{score}</div>
+                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Your Score</div>
+                  </div>
+                  <div className={`h-12 w-px transition-colors ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}></div>
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="text-5xl font-black text-red-600">{opponentScore ?? 0}</div>
+                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opponent</div>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* Invite Code for Friend Match */}
-            {matchState?.type === 'friend' && matchState.inviteCode && (
-              <div className={`mb-12 p-6 rounded-3xl border-2 inline-block transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invite Code</p>
-                <p className={`text-4xl font-black tracking-[0.2em] leading-none transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{matchState.inviteCode}</p>
-              </div>
+                {/* Middle Section: Icons and WIN/LOSE */}
+                <div className="flex items-center justify-center gap-8 md:gap-16 mb-8">
+                  {/* Player */}
+                  <div className="flex flex-col items-center gap-4">
+                    <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative transition-colors ${isWin && !isDraw ? (isDarkMode ? 'bg-emerald-950/30 ring-4 ring-emerald-500' : 'bg-emerald-50 ring-4 ring-emerald-500') : (isDarkMode ? 'bg-slate-800' : 'bg-slate-50')}`}>
+                      {player && React.createElement(PLAYER_ICONS.find(i => i.id === player.icon)?.icon || Smile, { className: `w-12 h-12 ${isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
+                      {isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
+                    </div>
+                    <div className={`font-black text-2xl italic uppercase tracking-tighter ${isWin && !isDraw ? 'text-emerald-600' : isDraw ? 'text-indigo-600' : 'text-slate-400'}`}>
+                      {isDraw ? 'DRAW' : isWin ? 'WIN' : 'LOSE'}
+                    </div>
+                  </div>
+
+                  <div className={`text-4xl font-black italic transition-colors ${isDarkMode ? 'text-slate-800' : 'text-slate-200'}`}>VS</div>
+
+                  {/* Opponent */}
+                  <div className="flex flex-col items-center gap-4">
+                    <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center shadow-xl relative transition-colors ${!isWin && !isDraw ? (isDarkMode ? 'bg-emerald-950/30 ring-4 ring-emerald-500' : 'bg-emerald-50 ring-4 ring-emerald-500') : (isDarkMode ? 'bg-slate-800' : 'bg-slate-50')}`}>
+                      {opponent && React.createElement(PLAYER_ICONS.find(i => i.id === opponent.icon)?.icon || Smile, { className: `w-12 h-12 ${!isWin && !isDraw ? 'text-emerald-600' : 'text-slate-400'}` })}
+                      {!isWin && !isDraw && <Crown className="absolute -top-4 -right-4 w-10 h-10 text-yellow-500 drop-shadow-lg rotate-12" />}
+                    </div>
+                    <div className={`font-black text-2xl italic uppercase tracking-tighter ${!isWin && !isDraw ? 'text-emerald-600' : isDraw ? 'text-indigo-600' : 'text-slate-400'}`}>
+                      {isDraw ? 'DRAW' : !isWin ? 'WIN' : 'LOSE'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Invite Code for Friend Match */}
+                {matchState?.type === 'friend' && matchState.inviteCode && (
+                  <div className={`mb-12 p-6 rounded-3xl border-2 inline-block transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invite Code</p>
+                    <p className={`text-4xl font-black tracking-[0.2em] leading-none transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{matchState.inviteCode}</p>
+                  </div>
+                )}
+              </>
             )}
           </>
         ) : (
@@ -3324,12 +3566,14 @@ function OnlineLobbyView({
   isDarkMode, 
   onBack, 
   onStartRandomBattle, 
+  onStartGroupBattle,
   onFriendMatch 
 }: { 
   player: Player | null, 
   isDarkMode: boolean, 
   onBack: () => void, 
   onStartRandomBattle: (pack: Pack, count: number) => void, 
+  onStartGroupBattle: (pack: Pack) => void,
   onFriendMatch: () => void 
 }) {
   const [selectedPackId, setSelectedPackId] = useState(PACKS[0].id);
@@ -3397,6 +3641,43 @@ function OnlineLobbyView({
           </button>
         </div>
 
+        {/* Mode 1.5: Group Battle Maker ("みんなで対戦") */}
+        <div className={`rounded-[2.5rem] p-8 border-2 shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
+          <div className="flex items-center gap-3 mb-6">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isDarkMode ? 'bg-indigo-950/40 text-indigo-400' : 'bg-indigo-50 text-indigo-600'}`}>
+              <Users className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h2 className={`font-black text-lg transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                2. みんなで対戦
+              </h2>
+              <p className="text-xs text-slate-400">3〜8人でマッチングして100点先取の早押しクイズ対戦！</p>
+            </div>
+          </div>
+
+          <div className="space-y-4 mb-6">
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Select Questions</label>
+              <select 
+                value={selectedPackId}
+                onChange={(e) => setSelectedPackId(e.target.value)}
+                className={`w-full px-4 py-3 rounded-xl border-2 outline-none transition-all font-bold ${isDarkMode ? 'bg-slate-950 border-slate-800 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'}`}
+              >
+                {PACKS.map(p => (
+                  <option key={p.id} value={p.id}>{p.category} - {p.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onStartGroupBattle(activePack)}
+            className="w-full py-4 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-black text-lg rounded-2xl shadow-lg transition-all active:scale-95"
+          >
+            みんなで対戦に参加する（早押しクイズ！）
+          </button>
+        </div>
+
         {/* Mode 2: Friend Battle Launcher */}
         <div className={`rounded-[2.5rem] p-8 border-2 shadow-sm transition-all group ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -3406,7 +3687,7 @@ function OnlineLobbyView({
               </div>
               <div>
                 <h2 className={`font-black text-lg transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                  2. 友達とルーム対戦（フレンドマッチ）
+                  3. 友達とルーム対戦（フレンドマッチ）
                 </h2>
                 <p className="text-xs text-slate-400">QRコードや招待コードを送って、特定の友達とスピード対戦できます</p>
               </div>

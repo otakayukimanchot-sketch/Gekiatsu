@@ -99,11 +99,17 @@ async function startServer() {
   const activeRooms = new Map<string, MatchRoomState>(); // key: roomId, value: roomData
 
   const generateQuestions = (packId: string, count: number): Word[] => {
-    const pack = PACKS.find(p => p.id === packId);
-    if (!pack) return [];
+    let pack = PACKS.find(p => p.id === packId);
+    if (!pack || !pack.words || pack.words.length === 0) {
+      // Fallback to first available pack with words
+      pack = PACKS.find(p => p.words && p.words.length > 0) || PACKS[0];
+    }
+    if (!pack || !pack.words || pack.words.length === 0) return [];
     
     const words: Word[] = [];
-    while (words.length < count) {
+    let attempts = 0;
+    while (words.length < count && attempts < 100) {
+      attempts++;
       const shuffled = [...pack.words].sort(() => Math.random() - 0.5);
       const mapped = shuffled.map(word => ({
         ...word,
@@ -123,7 +129,7 @@ async function startServer() {
 
   const startNextRound = (roomId: string) => {
     const room = activeRooms.get(roomId);
-    if (!room) return;
+    if (!room || room.phase === "finished") return;
 
     // Ensure we always have questions in the pool
     if (room.questionIndex >= room.questions.length - 2) {
@@ -160,34 +166,43 @@ async function startServer() {
 
   const startResultPhase = (roomId: string) => {
     const room = activeRooms.get(roomId);
-    if (!room) return;
+    if (!room || room.phase === "finished") return;
 
     room.phase = "result";
     broadcastState(roomId);
 
     setTimeout(() => {
-      startNextRound(roomId);
-    }, 1000); // 1.0s wait is shorter and feels snappier
+      const delayedRoom = activeRooms.get(roomId);
+      if (delayedRoom && delayedRoom.phase !== "finished") {
+        startNextRound(roomId);
+      }
+    }, room.type === "group" ? 4000 : 1000); // Wait longer for group match results
   };
 
   const startCountdown = (roomId: string) => {
     const room = activeRooms.get(roomId);
-    if (!room) return;
+    if (!room || room.phase === "finished") return;
 
     room.phase = "countdown";
     broadcastState(roomId);
 
     let count = 3;
     const interval = setInterval(() => {
+      const intervalRoom = activeRooms.get(roomId);
+      if (!intervalRoom || intervalRoom.phase === "finished") {
+        clearInterval(interval);
+        return;
+      }
+
       count -= 1;
       if (count <= 0) {
         clearInterval(interval);
-        room.phase = "question";
-        room.questionStartTime = Date.now();
+        intervalRoom.phase = "question";
+        intervalRoom.questionStartTime = Date.now();
         broadcastState(roomId);
 
         // Timer for question timeout (10s)
-        const currentIdx = room.questionIndex;
+        const currentIdx = intervalRoom.questionIndex;
         setTimeout(() => {
           const timeoutRoom = activeRooms.get(roomId);
           if (timeoutRoom && timeoutRoom.phase === "question" && timeoutRoom.questionIndex === currentIdx) {
@@ -195,20 +210,23 @@ async function startServer() {
           }
         }, 10000);
       } else {
-        broadcastState(roomId); // Broadcast for countdown update if needed (though client can handle local countdown, server-side is safer for sync)
+        broadcastState(roomId); // Broadcast for countdown update if needed
       }
     }, 1000);
   };
 
   const startLoadingPhase = (roomId: string) => {
     const room = activeRooms.get(roomId);
-    if (!room) return;
+    if (!room || room.phase === "finished") return;
 
     room.phase = "loading";
     broadcastState(roomId);
 
     setTimeout(() => {
-      startCountdown(roomId);
+      const delayedRoom = activeRooms.get(roomId);
+      if (delayedRoom && delayedRoom.phase !== "finished") {
+        startCountdown(roomId);
+      }
     }, 2000); // Brief loading time
   };
 
@@ -224,13 +242,22 @@ async function startServer() {
     console.log(`Client connected: ${socket.id} from ${socket.handshake.headers.origin}`);
     
     socket.on("join_match", ({ packId, questionCount, player }) => {
+      // Clean up any other active matching pool entries for this player/socket
+      matchingPool.forEach((val, key) => {
+        const s = io.sockets.sockets.get(val);
+        if (val === socket.id || (s && s.data.player?.id === player.id)) {
+          matchingPool.delete(key);
+        }
+      });
+
       const poolKey = `pool_${packId}_${questionCount}`;
       const waitingSocketId = matchingPool.get(poolKey);
 
       if (waitingSocketId && waitingSocketId !== socket.id) {
         const waitingSocket = io.sockets.sockets.get(waitingSocketId);
         
-        if (waitingSocket && waitingSocket.connected) {
+        // Ensure the waiting socket exists, is connected, and is NOT the same player
+        if (waitingSocket && waitingSocket.connected && waitingSocket.data.player?.id !== player.id) {
           matchingPool.delete(poolKey);
           const roomId = `room_${Math.random().toString(36).substr(2, 9)}`;
           const questions = generateQuestions(packId, questionCount);
@@ -256,7 +283,7 @@ async function startServer() {
           
           startMatchedPhase(roomId);
         } else {
-          // Stale socket in pool, replace with current
+          // Stale socket in pool or self-socket, replace with current
           socket.data.player = player;
           matchingPool.set(poolKey, socket.id);
           socket.emit("state_update", { 
@@ -286,6 +313,115 @@ async function startServer() {
       }
     });
 
+    socket.on("join_group_match", ({ packId, player }) => {
+      // Clean up any other active matching pool entries for this player/socket
+      matchingPool.forEach((val, key) => {
+        const s = io.sockets.sockets.get(val);
+        if (val === socket.id || (s && s.data.player?.id === player.id)) {
+          matchingPool.delete(key);
+        }
+      });
+
+      // Find an existing group room in matching phase with < 8 players
+      let foundRoom: MatchRoomState | undefined;
+      for (const [rid, room] of activeRooms.entries()) {
+        if (room.type === 'group' && room.phase === 'matching' && room.players.length < 8) {
+          foundRoom = room;
+          break;
+        }
+      }
+
+      if (foundRoom) {
+        // Ensure player is not already in the room
+        const alreadyIn = foundRoom.players.some(p => p.id === player.id);
+        if (!alreadyIn) {
+          foundRoom.players.push({
+            ...player,
+            socketId: socket.id,
+            score: 0,
+            isReady: false,
+            answered: false,
+            rematchRequested: false
+          });
+        } else {
+          // Update socket ID if rejoining or similar
+          const p = foundRoom.players.find(x => x.id === player.id);
+          if (p) p.socketId = socket.id;
+        }
+
+        socket.join(foundRoom.roomId);
+
+        // If >= 3 players, start lobby countdown if not already started
+        if (foundRoom.players.length >= 3) {
+          if (foundRoom.countdown === undefined || foundRoom.countdown === null) {
+            foundRoom.countdown = 10; // 10 seconds lobby matching countdown
+            
+            const roomId = foundRoom.roomId;
+            const interval = setInterval(() => {
+              const r = activeRooms.get(roomId);
+              if (!r || r.phase !== 'matching') {
+                clearInterval(interval);
+                return;
+              }
+              if (r.countdown !== undefined && r.countdown !== null) {
+                r.countdown -= 1;
+                if (r.countdown <= 0) {
+                  clearInterval(interval);
+                  r.countdown = undefined;
+                  
+                  // Match found! Transition to matched then loading/game-start
+                  startMatchedPhase(roomId);
+                  setTimeout(() => {
+                    const matchedRoom = activeRooms.get(roomId);
+                    if (matchedRoom && matchedRoom.phase === 'matched') {
+                      startLoadingPhase(roomId);
+                    }
+                  }, 2500);
+                } else {
+                  broadcastState(roomId);
+                }
+              }
+            }, 1000);
+          }
+        }
+
+        // If we hit 8 players (max limit), start immediately
+        if (foundRoom.players.length === 8) {
+          foundRoom.countdown = undefined;
+          startMatchedPhase(foundRoom.roomId);
+          setTimeout(() => {
+            const matchedRoom = activeRooms.get(foundRoom!.roomId);
+            if (matchedRoom && matchedRoom.phase === 'matched') {
+              startLoadingPhase(matchedRoom.roomId);
+            }
+          }, 2500);
+        }
+
+        broadcastState(foundRoom.roomId);
+      } else {
+        // Create new group matchmaking room
+        const roomId = `group_${Math.random().toString(36).substr(2, 9)}`;
+        const questions = generateQuestions(packId, 50); // Generates plenty of questions
+        const roomData: MatchRoomState = {
+          roomId,
+          type: 'group',
+          players: [
+            { ...player, socketId: socket.id, score: 0, isReady: false, answered: false, rematchRequested: false }
+          ],
+          packId,
+          questionCount: 50,
+          questions,
+          phase: "matching",
+          questionIndex: 0,
+          questionStartTime: 0,
+          countdown: null
+        };
+        activeRooms.set(roomId, roomData);
+        socket.join(roomId);
+        broadcastState(roomId);
+      }
+    });
+
     socket.on("create_friend_match", ({ packId, questionCount, player }) => {
       const inviteCode = Math.random().toString(36).substr(2, 6).toUpperCase();
       const roomId = `friend_${inviteCode}`;
@@ -312,10 +448,20 @@ async function startServer() {
     });
 
     socket.on("join_friend_match", ({ inviteCode, player }) => {
-      const roomId = `friend_${inviteCode}`;
+      const sanitizedCode = String(inviteCode || "").trim().toUpperCase();
+      const roomId = `friend_${sanitizedCode}`;
       const roomData = activeRooms.get(roomId);
       if (roomData && roomData.players.length < 4 && roomData.phase === "waiting_room") {
-        roomData.players.push({ ...player, socketId: socket.id, score: 0, isReady: false, answered: false, rematchRequested: false });
+        const alreadyInRoom = roomData.players.some(p => p.id === player.id);
+        if (alreadyInRoom) {
+          // Rejoining: Update socket ID of existing player record
+          const existingPlayer = roomData.players.find(p => p.id === player.id);
+          if (existingPlayer) {
+            existingPlayer.socketId = socket.id;
+          }
+        } else {
+          roomData.players.push({ ...player, socketId: socket.id, score: 0, isReady: false, answered: false, rematchRequested: false });
+        }
         socket.join(roomId);
         broadcastState(roomId);
       } else {
@@ -325,14 +471,14 @@ async function startServer() {
 
     socket.on("start_friend_match", ({ roomId }) => {
       const room = activeRooms.get(roomId);
-      if (room && room.players[0].socketId === socket.id) {
+      if (room && room.players[0] && room.players[0].socketId === socket.id) {
         startMatchedPhase(roomId);
       }
     });
 
     socket.on("player_ready", ({ roomId }) => {
       const room = activeRooms.get(roomId);
-      if (!room) return;
+      if (!room || room.phase === "finished") return;
 
       const player = room.players.find(p => p.socketId === socket.id);
       if (player) {
@@ -347,12 +493,50 @@ async function startServer() {
       }
     });
 
+    socket.on("buzz_in", ({ roomId }) => {
+      const room = activeRooms.get(roomId);
+      if (!room || room.phase !== "question") return;
+
+      const player = room.players.find(p => p.socketId === socket.id);
+      if (!player) return;
+
+      room.phase = "answering";
+      room.firstResponder = player.id;
+      room.questionStartTime = Date.now();
+      broadcastState(roomId);
+
+      const currentIdx = room.questionIndex;
+      setTimeout(() => {
+        const timeoutRoom = activeRooms.get(roomId);
+        if (timeoutRoom && timeoutRoom.phase === "answering" && timeoutRoom.questionIndex === currentIdx && timeoutRoom.firstResponder === player.id) {
+          player.score = Math.max(0, player.score - 10);
+          player.answered = true;
+          player.lastAnswer = { choice: "TIMEOUT", isCorrect: false, reactionTime: 10, questionIndex: currentIdx };
+          
+          const someoneWon = timeoutRoom.players.some(p => p.score >= 100);
+          if (someoneWon) {
+            timeoutRoom.phase = "finished";
+            broadcastState(roomId);
+          } else {
+            startResultPhase(roomId);
+          }
+        }
+      }, 10000);
+    });
+
     socket.on("answer", ({ roomId, choice, isCorrect, questionIndex }) => {
       const room = activeRooms.get(roomId);
       if (!room || (room.phase !== "question" && room.phase !== "answering")) return;
+      if (room.questionIndex !== questionIndex) return;
 
       const player = room.players.find(p => p.socketId === socket.id);
       if (!player || player.answered) return;
+
+      if (room.type === "group") {
+        if (room.phase !== "answering" || room.firstResponder !== player.id) {
+          return;
+        }
+      }
 
       const answerTime = Date.now();
       const reactionTime = (answerTime - room.questionStartTime) / 1000;
@@ -360,45 +544,66 @@ async function startServer() {
       player.answered = true;
       player.lastAnswer = { choice, isCorrect, reactionTime, questionIndex };
 
-      // Phase change to answering
-      room.phase = "answering";
-      room.firstResponder = player.id;
-      broadcastState(roomId);
+      if (room.type === "group") {
+        broadcastState(roomId);
 
-      setTimeout(() => {
-        const updatedRoom = activeRooms.get(roomId);
-        if (!updatedRoom) return;
+        setTimeout(() => {
+          const updatedRoom = activeRooms.get(roomId);
+          if (!updatedRoom || updatedRoom.phase === "finished") return;
 
-        if (isCorrect) {
-          player.score += 10;
-          if (player.score >= 100) {
+          if (isCorrect) {
+            player.score += 10;
+          } else {
+            player.score = Math.max(0, player.score - 10);
+          }
+
+          const someoneWon = updatedRoom.players.some(p => p.score >= 100);
+          if (someoneWon) {
             updatedRoom.phase = "finished";
             broadcastState(roomId);
           } else {
             startResultPhase(roomId);
           }
-        } else {
-          player.score = Math.max(0, player.score - 10);
-          const allAnswered = updatedRoom.players.every(p => p.answered);
-          if (allAnswered) {
-            startResultPhase(roomId);
-          } else {
-            // Back to question phase for others to buzz in
-            updatedRoom.phase = "question";
-            updatedRoom.firstResponder = undefined;
-            updatedRoom.questionStartTime = Date.now();
-            broadcastState(roomId);
+        }, 500);
+      } else {
+        room.phase = "answering";
+        room.firstResponder = player.id;
+        broadcastState(roomId);
 
-            const currentIdx = updatedRoom.questionIndex;
-            setTimeout(() => {
-              const timeoutRoom = activeRooms.get(roomId);
-              if (timeoutRoom && timeoutRoom.phase === "question" && timeoutRoom.questionIndex === currentIdx) {
-                startResultPhase(roomId);
-              }
-            }, 10000);
+        setTimeout(() => {
+          const updatedRoom = activeRooms.get(roomId);
+          if (!updatedRoom || updatedRoom.phase === "finished") return;
+
+          if (isCorrect) {
+            player.score += 10;
+            if (player.score >= 100) {
+              updatedRoom.phase = "finished";
+              broadcastState(roomId);
+            } else {
+              startResultPhase(roomId);
+            }
+          } else {
+            player.score = Math.max(0, player.score - 10);
+            const allAnswered = updatedRoom.players.every(p => p.answered);
+            if (allAnswered) {
+              startResultPhase(roomId);
+            } else {
+              updatedRoom.phase = "question";
+              updatedRoom.firstResponder = undefined;
+              updatedRoom.questionStartTime = Date.now();
+              broadcastState(roomId);
+
+              const currentIdx = updatedRoom.questionIndex;
+              setTimeout(() => {
+                const timeoutRoom = activeRooms.get(roomId);
+                if (timeoutRoom && timeoutRoom.phase === "question" && timeoutRoom.questionIndex === currentIdx) {
+                  startResultPhase(roomId);
+                }
+              }, 10000);
+            }
           }
-        }
-      }, 500); // Brief delay to show who answered
+        }, 500);
+      }
     });
 
     socket.on("get_state", ({ roomId }) => {
@@ -410,7 +615,7 @@ async function startServer() {
 
     socket.on("request_rematch", ({ roomId }) => {
       const room = activeRooms.get(roomId);
-      if (!room) return;
+      if (!room || room.phase === "finished") return;
 
       const player = room.players.find(p => p.socketId === socket.id);
       if (player) {
@@ -439,30 +644,47 @@ async function startServer() {
     });
 
     socket.on("cancel_match", () => {
-      for (const [key, value] of matchingPool.entries()) {
+      matchingPool.forEach((value, key) => {
         if (value === socket.id) {
           matchingPool.delete(key);
-          break;
         }
-      }
+      });
     });
 
     socket.on("leave_room", ({ roomId }) => {
       const room = activeRooms.get(roomId);
       if (room) {
-        const remainingPlayer = room.players.find(p => p.socketId !== socket.id);
-        const leavingPlayer = room.players.find(p => p.socketId === socket.id);
-        
-        if (room.phase !== "finished" && room.phase !== "waiting_room") {
-          if (remainingPlayer) {
-            remainingPlayer.score = 100;
-          }
-          if (leavingPlayer) {
-            leavingPlayer.score = 0;
+        const playerIndex = room.players.findIndex(p => p.socketId === socket.id);
+        if (playerIndex !== -1) {
+          if (room.phase === "matching" || room.phase === "waiting_room") {
+            room.players.splice(playerIndex, 1);
+            if (room.players.length === 0 || (room.type === "friend" && room.hostId === socket.id)) {
+              room.phase = "finished";
+            }
+            broadcastState(roomId);
+          } else if (room.phase !== "finished") {
+            if (room.type === "group") {
+              room.players[playerIndex].socketId = ""; // Mark disconnected
+              const activePlayers = room.players.filter(p => p.socketId !== "");
+              if (activePlayers.length <= 1) {
+                if (activePlayers.length === 1) {
+                  activePlayers[0].score = 100;
+                }
+                room.phase = "finished";
+              }
+              broadcastState(roomId);
+            } else {
+              const remainingPlayer = room.players.find(p => p.socketId !== socket.id);
+              const leavingPlayer = room.players[playerIndex];
+              if (remainingPlayer) {
+                remainingPlayer.score = 100;
+              }
+              leavingPlayer.score = 0;
+              room.phase = "finished";
+              broadcastState(roomId);
+            }
           }
         }
-        room.phase = "finished";
-        broadcastState(roomId);
       }
       socket.leave(roomId);
     });
@@ -473,19 +695,35 @@ async function startServer() {
       });
       
       activeRooms.forEach((room, roomId) => {
-        if (room.players.some(p => p.socketId === socket.id)) {
-          const remainingPlayer = room.players.find(p => p.socketId !== socket.id);
-          const disconnectingPlayer = room.players.find(p => p.socketId === socket.id);
-          
-          if (room.phase !== "finished" && room.phase !== "waiting_room") {
-            if (remainingPlayer) {
-              remainingPlayer.score = 100;
+        const playerIndex = room.players.findIndex(p => p.socketId === socket.id);
+        if (playerIndex !== -1) {
+          if (room.phase === "matching" || room.phase === "waiting_room") {
+            room.players.splice(playerIndex, 1);
+            if (room.players.length === 0 || (room.type === "friend" && room.hostId === socket.id)) {
+              room.phase = "finished";
             }
-            if (disconnectingPlayer) {
-              disconnectingPlayer.score = 0;
-            }
-            room.phase = "finished";
             broadcastState(roomId);
+          } else if (room.phase !== "finished") {
+            if (room.type === "group") {
+              room.players[playerIndex].socketId = ""; // Mark disconnected
+              const activePlayers = room.players.filter(p => p.socketId !== "");
+              if (activePlayers.length <= 1) {
+                if (activePlayers.length === 1) {
+                  activePlayers[0].score = 100;
+                }
+                room.phase = "finished";
+              }
+              broadcastState(roomId);
+            } else {
+              const remainingPlayer = room.players.find(p => p.socketId !== socket.id);
+              const disconnectingPlayer = room.players[playerIndex];
+              if (remainingPlayer) {
+                remainingPlayer.score = 100;
+              }
+              disconnectingPlayer.score = 0;
+              room.phase = "finished";
+              broadcastState(roomId);
+            }
           }
         }
       });
