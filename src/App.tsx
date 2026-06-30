@@ -9,7 +9,7 @@ import {
   Play, Settings, Info, ChevronRight, ChevronLeft,
   LogOut, MessageSquare, Send, Volume2, VolumeX,
   LogIn, QrCode, Scan, X, Copy, Check, Star, Share2, ExternalLink, Github,
-  BookOpen, Headphones, Moon, Sun
+  Search, BookOpen, Headphones, Moon, Sun, Trash2, Flame, Globe
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
@@ -42,7 +42,7 @@ const playSound = (type: 'correct' | 'wrong' | 'click') => {
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [loadProgress, setLoadProgress] = useState(0);
-  const [view, setView] = useState<'setup' | 'tutorial' | 'home' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join'>('setup');
+  const [view, setView] = useState<'setup' | 'tutorial' | 'home' | 'solo_packs' | 'online_lobby' | 'review_hub' | 'training_config' | 'training' | 'matching' | 'battle' | 'result' | 'suggestion' | 'friend_match_setup' | 'friend_match_waiting' | 'friend_match_join'>('setup');
   const [player, setPlayer] = useState<Player | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = useState<boolean>(() => {
@@ -357,6 +357,34 @@ export default function App() {
         const parsed = JSON.parse(savedPlayer);
         setPlayer(parsed);
         setView('home');
+
+        // Fetch fresh wrong questions from Firestore if online!
+        if (isOnline) {
+          getDocs(query(collection(db, 'wrongQuestions'), where('userId', '==', parsed.id)))
+            .then(snapshot => {
+              const wrongFromDb: Word[] = [];
+              snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                wrongFromDb.push({
+                  word: data.word,
+                  meaning: data.meaning,
+                  choices: data.choices || []
+                });
+              });
+              
+              if (wrongFromDb.length > 0) {
+                const combined = [...wrongFromDb, ...(parsed.wrongQuestions || [])];
+                const unique = combined.filter((word, index, self) => 
+                  index === self.findIndex((t) => t.word === word.word)
+                ).slice(0, 30);
+                
+                const updated = { ...parsed, wrongQuestions: unique };
+                setPlayer(updated);
+                localStorage.setItem('pokepoke_player', JSON.stringify(updated));
+              }
+            })
+            .catch(err => console.warn("Failed to fetch wrong questions on start:", err));
+        }
       } catch (e) {
         setPlayer(null);
         setView('setup');
@@ -366,7 +394,7 @@ export default function App() {
       setView('setup');
     }
     setIsAuthReady(true);
-  }, []);
+  }, [isOnline]);
 
   const handleToggleFavorite = async (packId: string) => {
     if (!player) return;
@@ -400,6 +428,62 @@ export default function App() {
     const updatedPlayer = { ...player, wrongQuestions: unique };
     setPlayer(updatedPlayer);
     localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
+
+    // Async sync to Firestore wrongQuestions collection if online!
+    if (isOnline) {
+      try {
+        for (const item of newWrongWords) {
+          const docId = `${player.id}_${encodeURIComponent(item.word)}`;
+          await setDoc(doc(db, 'wrongQuestions', docId), {
+            userId: player.id,
+            word: item.word,
+            meaning: item.meaning,
+            choices: item.choices || [],
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (err) {
+        console.warn("Firestore sync of wrong questions failed:", err);
+      }
+    }
+  };
+
+  const handleDeleteWrongWord = async (wordStr: string) => {
+    if (!player) return;
+    const currentWrong = player.wrongQuestions || [];
+    const updatedWrong = currentWrong.filter(w => w.word !== wordStr);
+    
+    const updatedPlayer = { ...player, wrongQuestions: updatedWrong };
+    setPlayer(updatedPlayer);
+    localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
+    playSound('click');
+
+    if (isOnline) {
+      try {
+        const docId = `${player.id}_${encodeURIComponent(wordStr)}`;
+        await deleteDoc(doc(db, 'wrongQuestions', docId));
+      } catch (err) {
+        console.warn("Firestore delete failed:", err);
+      }
+    }
+  };
+
+  const handleClearAllWrongQuestions = async () => {
+    if (!player) return;
+    const updatedPlayer = { ...player, wrongQuestions: [] };
+    setPlayer(updatedPlayer);
+    localStorage.setItem('pokepoke_player', JSON.stringify(updatedPlayer));
+    playSound('click');
+
+    if (isOnline) {
+      try {
+        const snapshot = await getDocs(query(collection(db, 'wrongQuestions'), where('userId', '==', player.id)));
+        const batchPromises = snapshot.docs.map(docSnap => deleteDoc(docSnap.ref));
+        await Promise.all(batchPromises);
+      } catch (err) {
+        console.warn("Firestore bulk delete failed:", err);
+      }
+    }
   };
 
   useEffect(() => {
@@ -472,9 +556,8 @@ export default function App() {
     console.log('Initializing socket connection to:', socketUrl);
     
     socketRef.current = io(socketUrl, {
-      // Use polling first, then upgrade to websocket.
-      // This is generally more reliable in standard web environments and proxies.
-      transports: ['polling', 'websocket'],
+      // Use websocket first to avoid proxy/load-balancer limitations on long polling.
+      transports: ['websocket', 'polling'],
       withCredentials: true,
       reconnectionAttempts: 30, // Increased
       reconnectionDelay: 1000,
@@ -907,6 +990,19 @@ export default function App() {
               <LogOut className="w-5 h-5 -scale-x-100" />
             </button>
           )}
+          {['solo_packs', 'online_lobby', 'review_hub', 'friend_match_setup', 'friend_match_join', 'training_config', 'suggestion'].includes(view) && (
+            <button 
+              onClick={() => {
+                playSound('click');
+                setView('home');
+              }}
+              className={`p-2 rounded-lg transition-colors flex items-center gap-1 font-bold text-xs ${isDarkMode ? 'bg-slate-800 text-indigo-400 hover:bg-slate-700' : 'bg-slate-100 text-indigo-600 hover:bg-slate-200'}`}
+              title="Dashboard"
+            >
+              <Home className="w-4 h-4" />
+              <span className="hidden sm:inline">ダッシュボード</span>
+            </button>
+          )}
           <button 
             onClick={() => setView('tutorial')}
             className={`p-2 transition-colors ${isDarkMode ? 'text-slate-500 hover:text-indigo-400' : 'text-slate-400 hover:text-indigo-600'}`}
@@ -946,6 +1042,17 @@ export default function App() {
       <main ref={mainRef} className="flex-1 overflow-y-auto pokepoke-scroll">
         <AnimatePresence mode="wait">
           {view === 'home' && (
+            <DashboardHubView 
+              player={player}
+              isDarkMode={isDarkMode}
+              onSelectSolo={() => { playSound('click'); setView('solo_packs'); }}
+              onSelectOnline={() => { playSound('click'); setView('online_lobby'); }}
+              onSelectReview={() => { playSound('click'); setView('review_hub'); }}
+              onSelectSuggestion={() => { playSound('click'); setView('suggestion'); }}
+              onLogout={handleLogout}
+            />
+          )}
+          {view === 'solo_packs' && (
             <HomeView 
               player={player}
               isDarkMode={isDarkMode}
@@ -960,6 +1067,37 @@ export default function App() {
                 setView('friend_match_setup');
               }}
               onToggleFavorite={handleToggleFavorite}
+              onBack={() => setView('home')}
+            />
+          )}
+          {view === 'online_lobby' && (
+            <OnlineLobbyView 
+              player={player}
+              isDarkMode={isDarkMode}
+              onBack={() => setView('home')}
+              onStartRandomBattle={(pack, count) => {
+                playSound('click');
+                setSelectedPack(pack);
+                setQuestionCount(count);
+                setView('matching');
+                socketRef.current?.emit('join_match', { packId: pack.id, questionCount: count, player });
+              }}
+              onFriendMatch={() => {
+                playSound('click');
+                setView('friend_match_setup');
+              }}
+            />
+          )}
+          {view === 'review_hub' && (
+            <ReviewHubView 
+              player={player}
+              isDarkMode={isDarkMode}
+              onBack={() => setView('home')}
+              onStartReviewTest={handleStartWrongQuestionsQuiz}
+              onDeleteWord={handleDeleteWrongWord}
+              onClearAll={handleClearAllWrongQuestions}
+              playAudio={playAudio}
+              isAudioPlaying={isAudioPlaying}
             />
           )}
           {view === 'suggestion' && (
@@ -979,7 +1117,13 @@ export default function App() {
                 setView('matching');
                 socketRef.current?.emit('join_match', { packId: selectedPack?.id, questionCount: count, player });
               }}
-              onBack={() => setView('home')}
+              onBack={() => {
+                if (selectedPack?.id === 'wrong_questions') {
+                  setView('review_hub');
+                } else {
+                  setView('solo_packs');
+                }
+              }}
             />
           )}
           {view === 'matching' && (
@@ -987,7 +1131,7 @@ export default function App() {
               isDarkMode={isDarkMode}
               onCancel={() => {
                 socketRef.current?.emit('cancel_match');
-                setView('home');
+                setView('online_lobby');
               }} 
               matchState={matchState} 
             />
@@ -996,7 +1140,7 @@ export default function App() {
             <FriendMatchSetupView 
               pack={selectedPack}
               isDarkMode={isDarkMode}
-              onBack={() => setView('home')}
+              onBack={() => setView('online_lobby')}
               onSelectPack={(p) => setSelectedPack(p)}
               onCreateMatch={(count) => {
                 setQuestionCount(count);
@@ -1009,7 +1153,13 @@ export default function App() {
             <FriendMatchWaitingView 
               inviteCode={inviteCode!}
               isDarkMode={isDarkMode}
-              onCancel={() => setView('home')}
+              onCancel={() => {
+                if (matchState?.roomId) {
+                  socketRef.current?.emit('leave_room', { roomId: matchState.roomId });
+                }
+                setMatchState(null);
+                setView('online_lobby');
+              }}
               matchState={matchState}
               player={player}
               onStart={() => socketRef.current?.emit('start_friend_match', { roomId: matchState?.roomId })}
@@ -1018,7 +1168,7 @@ export default function App() {
           {view === 'friend_match_join' && (
             <FriendMatchJoinView 
               isDarkMode={isDarkMode}
-              onBack={() => setView('home')}
+              onBack={() => setView('online_lobby')}
               onJoin={(code) => {
                 socketRef.current?.emit('join_friend_match', { inviteCode: code, player });
               }}
@@ -1729,24 +1879,32 @@ function QuizView({
   );
 }
 
-function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriendMatch, onToggleFavorite }: { 
+function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriendMatch, onToggleFavorite, onBack }: { 
   player: Player | null, 
   isDarkMode: boolean,
   onSelectPack: (pack: Pack) => void, 
   onWrongQuestions: () => void,
   onFriendMatch: () => void,
-  onToggleFavorite: (packId: string) => void
+  onToggleFavorite: (packId: string) => void,
+  onBack: () => void
 }) {
   const [activeTab, setActiveTab] = useState<'vocabulary' | 'listening'>('vocabulary');
+  const [searchQuery, setSearchQuery] = useState('');
   const favorites = player?.favorites || [];
   const wrongQuestions = player?.wrongQuestions || [];
   
-  const favoritePacks = PACKS.filter(p => favorites.includes(p.id)).filter(p => {
+  const filteredPacks = PACKS.filter(p => 
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    p.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const favoritePacks = filteredPacks.filter(p => favorites.includes(p.id)).filter(p => {
     if (activeTab === 'vocabulary') return p.category !== 'リスニング';
     return p.category === 'リスニング';
   });
 
-  const baseCategories = Array.from(new Set(PACKS.map(p => p.category)))
+  const baseCategories = Array.from(new Set(filteredPacks.map(p => p.category)))
     .filter(c => {
       if (activeTab === 'vocabulary') return c !== 'リスニング';
       return c === 'リスニング';
@@ -1767,7 +1925,7 @@ function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriend
 
   useEffect(() => {
     setExpandedCategories(categories);
-  }, [activeTab]);
+  }, [activeTab, searchQuery]);
 
   const toggleCategory = (category: string) => {
     setExpandedCategories(prev => 
@@ -1778,9 +1936,39 @@ function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriend
   };
 
   return (
-    <div className="p-6 pb-24">
+    <div className="p-6 pb-24 max-w-4xl mx-auto w-full">
+      <button onClick={onBack} className={`mb-8 flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
+        <ChevronLeft className="w-5 h-5" /> ダッシュボードに戻る
+      </button>
+
       <div className="mb-8 text-center">
-        <h1 className="text-xs font-black text-slate-400 uppercase tracking-widest">SELECT A PACK TO START</h1>
+        <h1 className="text-xs font-black text-slate-400 uppercase tracking-widest">トレーニング用パックを選択</h1>
+      </div>
+
+      {/* Search Input */}
+      <div className="mb-8 max-w-sm mx-auto">
+        <div className="relative">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="パック名や説明で検索..."
+            className={`w-full pl-12 pr-10 py-3 rounded-2xl border-2 outline-none transition-all font-bold ${
+              isDarkMode 
+                ? 'bg-slate-900 border-slate-800 text-white focus:border-indigo-500' 
+                : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'
+            }`}
+          />
+          <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+          {searchQuery && (
+            <button 
+              onClick={() => setSearchQuery('')}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tab Switcher */}
@@ -1914,29 +2102,6 @@ function HomeView({ player, isDarkMode, onSelectPack, onWrongQuestions, onFriend
         )}
       </div>
 
-      <div className="mt-12">
-        <h3 className={`text-xl font-black mb-4 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>クイックアクション</h3>
-        <div className="grid grid-cols-2 gap-4">
-           <button 
-             onClick={() => { playSound('click'); onFriendMatch(); }}
-             className={`p-6 rounded-3xl border-2 flex flex-col items-center gap-3 shadow-sm transition-all group ${isDarkMode ? 'bg-slate-900 border-slate-800 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-500'}`}
-           >
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-800 group-hover:bg-indigo-600' : 'bg-indigo-50 group-hover:bg-indigo-600'}`}>
-                 <QrCode className={`w-6 h-6 transition-colors ${isDarkMode ? 'text-indigo-400 group-hover:text-white' : 'text-indigo-600 group-hover:text-white'}`} />
-              </div>
-              <span className={`font-black text-sm transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>フレンド対戦</span>
-           </button>
-           <button 
-              onClick={onWrongQuestions}
-              className={`p-6 rounded-3xl border-2 flex flex-col items-center gap-3 shadow-sm transition-all group ${isDarkMode ? 'bg-slate-900 border-slate-800 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-500'}`}
-            >
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-800 group-hover:bg-red-600' : 'bg-red-50 group-hover:bg-red-600'}`}>
-                 <RotateCcw className={`w-6 h-6 transition-colors ${isDarkMode ? 'text-red-400 group-hover:text-white' : 'text-red-600 group-hover:text-white'}`} />
-              </div>
-              <span className={`font-black text-sm transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>間違えた問題</span>
-           </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -2534,6 +2699,23 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
   const [isCopied, setIsCopied] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
+  useEffect(() => {
+    // Automatically save mistakes to notebook when results view is shown
+    const wrongWords = answerHistory
+      .filter(item => item.status === 'wrong' || item.status === 'lost')
+      .map(item => {
+        for (const pack of PACKS) {
+          const found = pack.words.find(w => w.word === item.word);
+          if (found) return found;
+        }
+        return { word: item.word, meaning: item.meaning, choices: [] };
+      });
+    
+    if (wrongWords.length > 0) {
+      onSaveWrongQuestions(wrongWords as Word[]);
+    }
+  }, [answerHistory, onSaveWrongQuestions]);
+
   const handleSaveWrong = () => {
     const wrongWords = answerHistory
       .filter(item => item.status === 'wrong' || item.status === 'lost')
@@ -2702,18 +2884,25 @@ function ResultView({ mode, score, wrongCount, total, timeTaken, opponentScore, 
             <Home className="w-6 h-6" /> EXIT TO HOME
           </button>
           
-          <button
-            onClick={() => { playSound('click'); handleSaveWrong(); }}
-            disabled={isSaved || (answerHistory.filter(i => i.status !== 'correct').length === 0)}
-            className={`w-full py-5 rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center gap-2 border-2 ${
-              isSaved 
-              ? (isDarkMode ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400' : 'bg-emerald-50 border-emerald-500 text-emerald-600')
-              : (isDarkMode ? 'bg-amber-950/20 border-amber-900 text-amber-500 hover:bg-amber-950/40' : 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100')
-            }`}
-          >
-            {isSaved ? <Check className="w-6 h-6" /> : <Star className="w-6 h-6" />}
-            {isSaved ? 'SAVED TO MY LIST!' : 'SAVE MISTAKES'}
-          </button>
+          {answerHistory.filter(i => i.status !== 'correct').length > 0 ? (
+            <div className={`w-full py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 border-2 transition-all ${
+              isDarkMode 
+              ? 'bg-emerald-950/20 border-emerald-900/50 text-emerald-400' 
+              : 'bg-emerald-50 border-emerald-100 text-emerald-600'
+            }`}>
+              <Check className="w-5 h-5 text-emerald-500 animate-bounce" />
+              <span>間違えた問題を復習帳に自動保存しました！</span>
+            </div>
+          ) : (
+            <div className={`w-full py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 border-2 transition-all ${
+              isDarkMode 
+              ? 'bg-amber-950/20 border-amber-900/50 text-amber-400 animate-pulse' 
+              : 'bg-amber-50 border-amber-100 text-amber-600'
+            }`}>
+              <Trophy className="w-5 h-5 text-amber-500" />
+              <span>全問正解！完璧です！✨</span>
+            </div>
+          )}
         </div>
 
         {/* Answer History List */}
@@ -2956,6 +3145,483 @@ function SetupView({ onComplete, isMusicMuted, onToggleMute, isDarkMode, onToggl
         </div>
       </motion.div>
     </div>
+  );
+}
+
+// ==========================================
+// 1. DASHBOARD HUB VIEW
+// ==========================================
+function DashboardHubView({ 
+  player, 
+  isDarkMode, 
+  onSelectSolo, 
+  onSelectOnline, 
+  onSelectReview, 
+  onSelectSuggestion,
+  onLogout 
+}: { 
+  player: Player | null, 
+  isDarkMode: boolean, 
+  onSelectSolo: () => void, 
+  onSelectOnline: () => void, 
+  onSelectReview: () => void, 
+  onSelectSuggestion: () => void,
+  onLogout: () => void 
+}) {
+  const wrongCount = player?.wrongQuestions?.length || 0;
+  const favoritesCount = player?.favorites?.length || 0;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -15 }}
+      className="p-6 max-w-4xl mx-auto w-full space-y-8 pb-24"
+    >
+      {/* Welcome Banner */}
+      <div className={`rounded-[2.5rem] p-8 md:p-12 relative overflow-hidden transition-all shadow-xl ${isDarkMode ? 'bg-gradient-to-br from-slate-900 to-indigo-950/40 border border-indigo-900/40' : 'bg-gradient-to-br from-indigo-50 to-white border border-indigo-100/50'}`}>
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div>
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider mb-4 ${isDarkMode ? 'bg-indigo-950/55 text-indigo-400' : 'bg-indigo-100/50 text-indigo-700'}`}>
+              <Flame className="w-3.5 h-3.5 text-orange-500 animate-pulse" />
+              <span>Gekiatsu English Challenge</span>
+            </div>
+            <h1 className={`text-4xl md:text-5xl font-black tracking-tight uppercase leading-tight mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+              ハロー、{player?.name || 'ゲスト'}！
+            </h1>
+            <p className={`text-sm font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              ボキャブラリーとリスニング力を鍛え上げ、日本中のライバル達とリアルタイム対戦しよう！
+            </p>
+          </div>
+          <div className="flex gap-4">
+            <div className={`px-6 py-4 rounded-3xl text-center shadow-sm border ${isDarkMode ? 'bg-slate-950/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">お気に入り</p>
+              <p className="text-2xl font-black text-indigo-600">{favoritesCount} <span className="text-xs text-slate-400">パック</span></p>
+            </div>
+            <div className={`px-6 py-4 rounded-3xl text-center shadow-sm border ${isDarkMode ? 'bg-slate-950/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">間違えた問題</p>
+              <p className={`text-2xl font-black ${wrongCount > 0 ? 'text-red-500' : 'text-slate-400'}`}>{wrongCount} <span className="text-xs text-slate-400">問</span></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Modes Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Solo Play Card */}
+        <motion.button
+          whileHover={{ y: -6, scale: 1.01 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onSelectSolo}
+          className={`rounded-[2.5rem] p-8 text-left border-2 shadow-sm transition-all flex flex-col justify-between group h-64 ${
+            isDarkMode 
+              ? 'bg-slate-900 border-slate-800 hover:border-indigo-500' 
+              : 'bg-white border-slate-100 hover:border-indigo-500'
+          }`}
+        >
+          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-800 group-hover:bg-indigo-600' : 'bg-indigo-50 group-hover:bg-indigo-600'}`}>
+            <BookOpen className={`w-7 h-7 transition-colors ${isDarkMode ? 'text-indigo-400 group-hover:text-white' : 'text-indigo-600 group-hover:text-white'}`} />
+          </div>
+          <div>
+            <span className="text-xs font-black text-slate-400 uppercase tracking-widest block mb-1">SOLO PLAY</span>
+            <h2 className={`text-2xl font-black tracking-tight leading-none mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+              自主トレ（ソロプレイ）
+            </h2>
+            <p className={`text-xs font-bold leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              自分のペースで公式の単語・リスニング問題集をサクサク学習！お気に入り登録も可能です。
+            </p>
+          </div>
+        </motion.button>
+
+        {/* Online Battle Card */}
+        <motion.button
+          whileHover={{ y: -6, scale: 1.01 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onSelectOnline}
+          className={`rounded-[2.5rem] p-8 text-left border-2 shadow-sm transition-all flex flex-col justify-between group h-64 ${
+            isDarkMode 
+              ? 'bg-slate-900 border-slate-800 hover:border-orange-500' 
+              : 'bg-white border-slate-100 hover:border-orange-500'
+          }`}
+        >
+          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-slate-800 group-hover:bg-orange-600' : 'bg-orange-50 group-hover:bg-orange-600'}`}>
+            <Gamepad2 className={`w-7 h-7 transition-colors ${isDarkMode ? 'text-orange-400 group-hover:text-white' : 'text-orange-600 group-hover:text-white'}`} />
+          </div>
+          <div>
+            <span className="text-xs font-black text-slate-400 uppercase tracking-widest block mb-1">ONLINE PLAY</span>
+            <h2 className={`text-2xl font-black tracking-tight leading-none mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+              オンライン対戦（バトル）
+            </h2>
+            <p className={`text-xs font-bold leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              全国の英語学習者とリアルタイムスピード対戦！友達とルーム対戦（フレンドマッチ）も。
+            </p>
+          </div>
+        </motion.button>
+      </div>
+
+      {/* Review Hub Highlight Card */}
+      <motion.button
+        whileHover={{ y: -4, scale: 1.005 }}
+        whileTap={{ scale: 0.99 }}
+        onClick={onSelectReview}
+        className={`w-full rounded-[2.5rem] p-8 text-left border-2 shadow-sm transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 group relative overflow-hidden ${
+          isDarkMode 
+            ? 'bg-slate-900 border-slate-800 hover:border-red-500/50' 
+            : 'bg-white border-slate-100 hover:border-red-500/50'
+        }`}
+      >
+        <div className="flex items-center gap-5">
+          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors flex-shrink-0 ${isDarkMode ? 'bg-slate-800 group-hover:bg-red-600' : 'bg-red-50 group-hover:bg-red-600'}`}>
+            <RotateCcw className={`w-7 h-7 transition-colors ${isDarkMode ? 'text-red-400 group-hover:text-white' : 'text-red-600 group-hover:text-white'}`} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-black text-slate-400 uppercase tracking-widest">WRONG QUESTIONS REVIEW</span>
+              {wrongCount > 0 && (
+                <span className="px-2 py-0.5 bg-red-500 text-white font-black text-[9px] rounded-full uppercase animate-pulse">
+                  復習が必要！
+                </span>
+              )}
+            </div>
+            <h2 className={`text-2xl font-black tracking-tight leading-none mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+              苦手克服（マイ復習帳）
+            </h2>
+            <p className={`text-xs font-bold leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              間違えた問題を自動で蓄積。カード型暗記、音声再生機能、専用テストで弱点をピンポイント消去！
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className={`text-xl font-black px-4 py-2 rounded-2xl ${wrongCount > 0 ? 'bg-red-500/10 text-red-500' : 'bg-slate-100 text-slate-400'}`}>
+            {wrongCount} 問
+          </span>
+          <ChevronRight className="w-5 h-5 text-slate-400 group-hover:translate-x-1 transition-transform" />
+        </div>
+      </motion.button>
+
+      {/* Footer Utility Actions */}
+      <div className="flex items-center justify-between gap-4 pt-4 flex-wrap border-t border-slate-100/50">
+        <button 
+          onClick={onSelectSuggestion}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all ${isDarkMode ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'}`}
+        >
+          <MessageSquare className="w-4 h-4" />
+          <span>アプリの改善要望を送る</span>
+        </button>
+
+        <button 
+          onClick={onLogout}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold text-red-500 hover:bg-red-50/50 transition-all`}
+        >
+          <LogOut className="w-4 h-4" />
+          <span>サインアウト / ログアウト</span>
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+// ==========================================
+// 2. ONLINE LOBBY VIEW
+// ==========================================
+function OnlineLobbyView({ 
+  player, 
+  isDarkMode, 
+  onBack, 
+  onStartRandomBattle, 
+  onFriendMatch 
+}: { 
+  player: Player | null, 
+  isDarkMode: boolean, 
+  onBack: () => void, 
+  onStartRandomBattle: (pack: Pack, count: number) => void, 
+  onFriendMatch: () => void 
+}) {
+  const [selectedPackId, setSelectedPackId] = useState(PACKS[0].id);
+  const [questionCount, setQuestionCount] = useState(15);
+
+  const activePack = PACKS.find(p => p.id === selectedPackId) || PACKS[0];
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -20 }}
+      className="p-6 max-w-2xl mx-auto w-full space-y-8 pb-24"
+    >
+      {/* Back to Hub Link */}
+      <button onClick={onBack} className={`flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
+        <ChevronLeft className="w-5 h-5" /> ダッシュボードに戻る
+      </button>
+
+      <div>
+        <h1 className={`text-3xl font-black mb-2 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+          オンラインバトル
+        </h1>
+        <p className="text-slate-400 font-bold text-sm">
+          他のプレイヤーとスピードクイズ対戦！回答スピードが命です。
+        </p>
+      </div>
+
+      {/* Online Options */}
+      <div className="space-y-6">
+        {/* Mode 1: Random Battle Maker */}
+        <div className={`rounded-[2.5rem] p-8 border-2 shadow-sm transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
+          <div className="flex items-center gap-3 mb-6">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isDarkMode ? 'bg-indigo-950/40 text-indigo-400' : 'bg-indigo-50 text-indigo-600'}`}>
+              <Globe className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className={`font-black text-lg transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                1. 全国ランダムマッチ
+              </h2>
+              <p className="text-xs text-slate-400">現在オンラインのプレイヤーから自動で相手を探します</p>
+            </div>
+          </div>
+
+          <div className="space-y-4 mb-6">
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Select Questions</label>
+              <select 
+                value={selectedPackId}
+                onChange={(e) => setSelectedPackId(e.target.value)}
+                className={`w-full px-4 py-3 rounded-xl border-2 outline-none transition-all font-bold ${isDarkMode ? 'bg-slate-950 border-slate-800 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'}`}
+              >
+                {PACKS.map(p => (
+                  <option key={p.id} value={p.id}>{p.category} - {p.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onStartRandomBattle(activePack, questionCount)}
+            className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-lg rounded-2xl shadow-lg transition-all active:scale-95"
+          >
+            対戦相手を探す（マッチング開始！）
+          </button>
+        </div>
+
+        {/* Mode 2: Friend Battle Launcher */}
+        <div className={`rounded-[2.5rem] p-8 border-2 shadow-sm transition-all group ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100'}`}>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isDarkMode ? 'bg-purple-950/40 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className={`font-black text-lg transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                  2. 友達とルーム対戦（フレンドマッチ）
+                </h2>
+                <p className="text-xs text-slate-400">QRコードや招待コードを送って、特定の友達とスピード対戦できます</p>
+              </div>
+            </div>
+            <button
+              onClick={onFriendMatch}
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-black rounded-xl transition-all active:scale-95 flex-shrink-0 text-center"
+            >
+              フレンドマッチを起動
+            </button>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ==========================================
+// 3. REVIEW HUB VIEW
+// ==========================================
+function ReviewHubView({ 
+  player, 
+  isDarkMode, 
+  onBack, 
+  onStartReviewTest, 
+  onDeleteWord, 
+  onClearAll,
+  playAudio,
+  isAudioPlaying
+}: { 
+  player: Player | null, 
+  isDarkMode: boolean, 
+  onBack: () => void, 
+  onStartReviewTest: () => void, 
+  onDeleteWord: (word: string) => void,
+  onClearAll: () => void,
+  playAudio: (word: string, fallbackText: string) => void,
+  isAudioPlaying: boolean
+}) {
+  const wrongWords = player?.wrongQuestions || [];
+  const [flippedWord, setFlippedWord] = useState<string | null>(null);
+
+  const toggleFlip = (word: string) => {
+    if (flippedWord === word) {
+      setFlippedWord(null);
+    } else {
+      setFlippedWord(word);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      className="p-6 max-w-4xl mx-auto w-full space-y-8 pb-24"
+    >
+      {/* Back Button */}
+      <button onClick={onBack} className={`flex items-center gap-2 font-black uppercase text-xs tracking-widest transition-colors ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}>
+        <ChevronLeft className="w-5 h-5" /> ダッシュボードに戻る
+      </button>
+
+      {/* Header Info */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <h1 className={`text-3xl font-black mb-2 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+            苦手克服帳（マイ復習帳）
+          </h1>
+          <p className="text-slate-400 font-bold text-sm">
+            対戦やトレーニング中に間違えた問題が自動でここに保存されます。覚えたら「覚えた！」で削除。
+          </p>
+        </div>
+        {wrongWords.length > 0 && (
+          <button
+            onClick={() => {
+              if (window.confirm("復習帳をすべてクリアしますか？")) {
+                onClearAll();
+              }
+            }}
+            className="px-4 py-2 rounded-xl text-xs font-bold text-red-500 hover:bg-red-50 transition-colors border border-red-100"
+          >
+            復習帳をすべて削除
+          </button>
+        )}
+      </div>
+
+      {wrongWords.length > 0 ? (
+        <div className="space-y-8">
+          {/* Practice Test Launcher */}
+          <div className={`rounded-[2.5rem] p-8 border-2 shadow-sm text-center relative overflow-hidden ${isDarkMode ? 'bg-gradient-to-r from-red-950/20 to-slate-900 border-red-900/30' : 'bg-gradient-to-r from-red-50/50 to-white border-red-100/50'}`}>
+            <div className="max-w-lg mx-auto">
+              <span className="px-3 py-1 bg-red-500 text-white font-black text-[9px] rounded-full uppercase tracking-wider mb-4 inline-block">
+                復習テスト
+              </span>
+              <h2 className={`text-2xl font-black tracking-tight mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                苦手克服特訓（実力テスト）を開始する
+              </h2>
+              <p className={`text-xs font-bold mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                現在保存されている {wrongWords.length} 個の間間違え問題からランダムでテストを生成します！完璧を目指してトライ！
+              </p>
+              <button
+                onClick={onStartReviewTest}
+                className="px-8 py-4 bg-red-600 hover:bg-red-700 text-white font-black text-lg rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer"
+              >
+                テスト開始！
+              </button>
+            </div>
+          </div>
+
+          {/* Cards Guide */}
+          <div className="text-center">
+            <p className="text-xs text-slate-400 font-bold">カードをタップすると日本語の意味が反転表示（フリップ）します！</p>
+          </div>
+
+          {/* Cards Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+            {wrongWords.map((item) => {
+              const isFlipped = flippedWord === item.word;
+              return (
+                <div 
+                  key={item.word} 
+                  className={`perspective-1000 h-48 relative group`}
+                >
+                  <div 
+                    onClick={() => toggleFlip(item.word)}
+                    className={`w-full h-full duration-500 transform-style-3d relative cursor-pointer ${
+                      isFlipped ? 'rotate-y-180' : ''
+                    }`}
+                  >
+                    {/* Front of Card */}
+                    <div className={`absolute inset-0 backface-hidden rounded-[2rem] border-2 p-6 flex flex-col justify-between transition-colors shadow-sm ${
+                      isDarkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-100 text-slate-800'
+                    }`}>
+                      <div className="flex justify-between items-start">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            playAudio(item.word, item.word);
+                          }}
+                          className={`p-2 rounded-xl transition-colors ${
+                            isDarkMode ? 'bg-slate-800 text-indigo-400 hover:bg-slate-700' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                          }`}
+                          title="発音を聴く"
+                        >
+                          <Volume2 className="w-4 h-4" />
+                        </button>
+                        
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteWord(item.word);
+                          }}
+                          className="p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all"
+                          title="覚えたので削除"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div>
+                        <h3 className="text-2xl font-black tracking-tight uppercase leading-none break-all">
+                          {item.word}
+                        </h3>
+                        <p className="text-[9px] font-bold text-indigo-500 uppercase tracking-wider mt-1">Tap to Flip</p>
+                      </div>
+                    </div>
+
+                    {/* Back of Card */}
+                    <div className={`absolute inset-0 backface-hidden rotate-y-180 rounded-[2rem] border-2 p-6 flex flex-col justify-between transition-colors shadow-md ${
+                      isDarkMode ? 'bg-slate-950 border-red-950 text-white' : 'bg-red-50/40 border-red-100 text-slate-800'
+                    }`}>
+                      <div className="text-right">
+                        <span className="px-2.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[8px] font-black uppercase">意味</span>
+                      </div>
+
+                      <div className="text-center my-auto">
+                        <h4 className="text-xl font-black text-red-600 leading-tight">
+                          {item.meaning}
+                        </h4>
+                      </div>
+
+                      <div className="flex justify-between items-center text-[9px] text-slate-400 font-bold">
+                        <span>タップで戻る</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteWord(item.word);
+                          }}
+                          className="text-red-500 font-bold hover:underline"
+                        >
+                          覚えた！
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className={`w-full py-20 flex flex-col items-center justify-center rounded-[2.5rem] border-2 border-dashed transition-colors ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+          <Trophy className="w-16 h-16 text-slate-300 mb-4" />
+          <p className="text-slate-500 font-black uppercase tracking-widest text-xs mb-2">復習帳はクリアです！</p>
+          <p className="text-slate-400 text-xs text-center max-w-xs">
+            クイズで間違えた単語がここに追加されます。対戦をプレイしてトレーニングしましょう！
+          </p>
+        </div>
+      )}
+    </motion.div>
   );
 }
 

@@ -44,7 +44,7 @@ async function startServer() {
     pingInterval: 10000,
     pingTimeout: 30000,
     allowEIO3: true,
-    transports: ['polling', 'websocket']
+    transports: ['websocket', 'polling']
   });
 
   // Health check routes
