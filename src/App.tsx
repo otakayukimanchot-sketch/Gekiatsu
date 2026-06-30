@@ -2558,8 +2558,9 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
   onSelectPack: (pack: Pack) => void,
   isDarkMode: boolean
 }) {
-  // If the pack is "wrong_questions", we must force selection of a real pack
-  const initialIsSelecting = !pack || pack.id === 'wrong_questions';
+  const nonListeningPacks = PACKS.filter(p => p.type !== 'listening');
+  // If the pack is "wrong_questions" or is a listening pack, we must force selection of a real pack
+  const initialIsSelecting = !pack || pack.id === 'wrong_questions' || pack.type === 'listening';
   const [isSelectingPack, setIsSelectingPack] = useState(initialIsSelecting);
 
   if (isSelectingPack) {
@@ -2574,7 +2575,7 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
         </button>
         <h2 className={`text-3xl font-black mb-8 tracking-tighter uppercase transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Select Pack for Friend Match</h2>
         <div className="grid grid-cols-1 gap-4">
-          {PACKS.map(p => (
+          {nonListeningPacks.map(p => (
             <button
               key={p.id}
               onClick={() => { onSelectPack(p); setIsSelectingPack(false); }}
@@ -3576,10 +3577,11 @@ function OnlineLobbyView({
   onStartGroupBattle: (pack: Pack) => void,
   onFriendMatch: () => void 
 }) {
-  const [selectedPackId, setSelectedPackId] = useState(PACKS[0].id);
+  const nonListeningPacks = PACKS.filter(p => p.type !== 'listening');
+  const [selectedPackId, setSelectedPackId] = useState(nonListeningPacks[0]?.id || PACKS[0].id);
   const [questionCount, setQuestionCount] = useState(15);
 
-  const activePack = PACKS.find(p => p.id === selectedPackId) || PACKS[0];
+  const activePack = nonListeningPacks.find(p => p.id === selectedPackId) || nonListeningPacks[0] || PACKS[0];
 
   return (
     <motion.div 
@@ -3626,7 +3628,7 @@ function OnlineLobbyView({
                 onChange={(e) => setSelectedPackId(e.target.value)}
                 className={`w-full px-4 py-3 rounded-xl border-2 outline-none transition-all font-bold ${isDarkMode ? 'bg-slate-950 border-slate-800 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'}`}
               >
-                {PACKS.map(p => (
+                {nonListeningPacks.map(p => (
                   <option key={p.id} value={p.id}>{p.category} - {p.name}</option>
                 ))}
               </select>
@@ -3663,7 +3665,7 @@ function OnlineLobbyView({
                 onChange={(e) => setSelectedPackId(e.target.value)}
                 className={`w-full px-4 py-3 rounded-xl border-2 outline-none transition-all font-bold ${isDarkMode ? 'bg-slate-950 border-slate-800 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-900 focus:border-indigo-500'}`}
               >
-                {PACKS.map(p => (
+                {nonListeningPacks.map(p => (
                   <option key={p.id} value={p.id}>{p.category} - {p.name}</option>
                 ))}
               </select>
