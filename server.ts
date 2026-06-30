@@ -102,12 +102,16 @@ async function startServer() {
     const pack = PACKS.find(p => p.id === packId);
     if (!pack) return [];
     
-    // Shuffle and pick
-    const shuffled = [...pack.words].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count).map(word => ({
-      ...word,
-      choices: [...word.choices].sort(() => Math.random() - 0.5)
-    }));
+    const words: Word[] = [];
+    while (words.length < count) {
+      const shuffled = [...pack.words].sort(() => Math.random() - 0.5);
+      const mapped = shuffled.map(word => ({
+        ...word,
+        choices: [...word.choices].sort(() => Math.random() - 0.5)
+      }));
+      words.push(...mapped);
+    }
+    return words.slice(0, count);
   };
 
   const broadcastState = (roomId: string) => {
@@ -121,7 +125,15 @@ async function startServer() {
     const room = activeRooms.get(roomId);
     if (!room) return;
 
-    if (room.questionIndex < room.questionCount - 1) {
+    // Ensure we always have questions in the pool
+    if (room.questionIndex >= room.questions.length - 2) {
+      const additionalQuestions = generateQuestions(room.packId, 50);
+      room.questions = [...room.questions, ...additionalQuestions];
+    }
+
+    // Check if either player has reached 100 points
+    const someoneWon = room.players.some(p => p.score >= 100);
+    if (!someoneWon) {
       room.questionIndex += 1;
       room.phase = "question";
       room.questionStartTime = Date.now();
@@ -358,17 +370,32 @@ async function startServer() {
         if (!updatedRoom) return;
 
         if (isCorrect) {
-          player.score += 1;
-          startResultPhase(roomId);
+          player.score += 10;
+          if (player.score >= 100) {
+            updatedRoom.phase = "finished";
+            broadcastState(roomId);
+          } else {
+            startResultPhase(roomId);
+          }
         } else {
+          player.score = Math.max(0, player.score - 10);
           const allAnswered = updatedRoom.players.every(p => p.answered);
           if (allAnswered) {
             startResultPhase(roomId);
           } else {
-            // Back to question phase for others
+            // Back to question phase for others to buzz in
             updatedRoom.phase = "question";
             updatedRoom.firstResponder = undefined;
+            updatedRoom.questionStartTime = Date.now();
             broadcastState(roomId);
+
+            const currentIdx = updatedRoom.questionIndex;
+            setTimeout(() => {
+              const timeoutRoom = activeRooms.get(roomId);
+              if (timeoutRoom && timeoutRoom.phase === "question" && timeoutRoom.questionIndex === currentIdx) {
+                startResultPhase(roomId);
+              }
+            }, 10000);
           }
         }
       }, 500); // Brief delay to show who answered
@@ -423,11 +450,19 @@ async function startServer() {
     socket.on("leave_room", ({ roomId }) => {
       const room = activeRooms.get(roomId);
       if (room) {
-        // In a real app, handle player leaving better
-        // For now, just end the game or notify the other player
+        const remainingPlayer = room.players.find(p => p.socketId !== socket.id);
+        const leavingPlayer = room.players.find(p => p.socketId === socket.id);
+        
+        if (room.phase !== "finished" && room.phase !== "waiting_room") {
+          if (remainingPlayer) {
+            remainingPlayer.score = 100;
+          }
+          if (leavingPlayer) {
+            leavingPlayer.score = 0;
+          }
+        }
         room.phase = "finished";
         broadcastState(roomId);
-        activeRooms.delete(roomId);
       }
       socket.leave(roomId);
     });
@@ -439,9 +474,16 @@ async function startServer() {
       
       activeRooms.forEach((room, roomId) => {
         if (room.players.some(p => p.socketId === socket.id)) {
-          // In a real app, handle player disconnection better
-          // For now, just end the game if it's a battle
-          if (room.type === 'battle') {
+          const remainingPlayer = room.players.find(p => p.socketId !== socket.id);
+          const disconnectingPlayer = room.players.find(p => p.socketId === socket.id);
+          
+          if (room.phase !== "finished" && room.phase !== "waiting_room") {
+            if (remainingPlayer) {
+              remainingPlayer.score = 100;
+            }
+            if (disconnectingPlayer) {
+              disconnectingPlayer.score = 0;
+            }
             room.phase = "finished";
             broadcastState(roomId);
           }

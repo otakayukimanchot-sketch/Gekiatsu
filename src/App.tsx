@@ -1570,7 +1570,7 @@ function QuizView({
               </span>
             </button>
             <p className={`text-2xl font-black tracking-tighter transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-              {currentIndex + 1} <span className="text-slate-300 mx-1">/</span> {total}
+              {mode === 'battle' ? `ROUND ${currentIndex + 1}` : `${currentIndex + 1} / ${total}`}
             </p>
           </div>
         </div>
@@ -1609,13 +1609,13 @@ function QuizView({
           <div className={`h-1.5 w-full rounded-full overflow-hidden flex transition-colors ${isDarkMode ? 'bg-slate-900' : 'bg-slate-100'}`}>
             <motion.div 
               initial={{ width: 0 }}
-              animate={{ width: `${(score / total) * 100}%` }}
+              animate={{ width: `${Math.min(100, (score / 100) * 100)}%` }}
               className="h-full bg-indigo-500"
             />
             <div className="flex-1"></div>
             <motion.div 
               initial={{ width: 0 }}
-              animate={{ width: `${(opponentScore / total) * 100}%` }}
+              animate={{ width: `${Math.min(100, (opponentScore / 100) * 100)}%` }}
               className="h-full bg-red-500"
             />
           </div>
@@ -2454,17 +2454,12 @@ function FriendMatchSetupView({ pack, onBack, onCreateMatch, onJoinMatch, onSele
              </div>
           </div>
           
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            {[10, 30, 50, 100].map(count => (
-              <button
-                key={count}
-                onClick={() => onCreateMatch(count)}
-                className={`py-4 border-2 border-transparent rounded-2xl font-black transition-all ${isDarkMode ? 'bg-slate-800 text-slate-400 hover:border-indigo-500/50 hover:text-indigo-400' : 'bg-slate-50 text-slate-700 hover:border-indigo-500 hover:bg-white hover:text-indigo-600'}`}
-              >
-                {count} Questions
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={() => onCreateMatch(999)}
+            className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-lg rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
+          >
+            ルームを作成する
+          </button>
         </div>
 
         <button 
