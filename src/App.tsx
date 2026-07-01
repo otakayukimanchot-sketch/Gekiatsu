@@ -622,7 +622,7 @@ export default function App() {
     return () => {
       socketRef.current?.disconnect();
     };
-  }, [player]);
+  }, []);
 
   // --- Handle Match State Changes ---
   useEffect(() => {
@@ -2393,36 +2393,6 @@ function TrainingConfigView({ pack, onStartTraining, onStartBattle, onBack, isDa
                 ))}
               </div>
             </div>
-
-            {pack.id !== 'wrong_questions' && (
-              <div className={`rounded-3xl p-6 shadow-2xl transition-colors ${isDarkMode ? 'bg-indigo-950/20 border-2 border-indigo-900' : 'bg-indigo-900'}`}>
-                <div className="flex items-center gap-3 mb-6">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isDarkMode ? 'bg-white/5' : 'bg-white/10'}`}>
-                    <Users className="w-5 h-5 text-white" />
-                  </div>
-                  <span className="font-black text-white uppercase tracking-tight">リアルタイムバトル</span>
-                </div>
-                <div className="flex flex-wrap gap-3 mb-6">
-                  {[10, 30, 50, 100].map(count => (
-                    <button
-                      key={count}
-                      onClick={() => setSelectedCount(count)}
-                      className={`flex-1 min-w-[100px] py-4 rounded-2xl font-black transition-all ${
-                        selectedCount === count ? 'bg-indigo-600 text-white' : (isDarkMode ? 'bg-white/5 text-white/30 hover:bg-white/10' : 'bg-white/10 text-white/50 hover:bg-white/20')
-                      }`}
-                    >
-                      {count} Questions
-                    </button>
-                  ))}
-                </div>
-                <button
-                  onClick={() => onStartBattle(selectedCount)}
-                  className={`w-full py-5 rounded-2xl font-black text-xl flex items-center justify-center gap-3 active:scale-95 transition-all shadow-xl ${isDarkMode ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-white text-slate-900 hover:bg-indigo-50'}`}
-                >
-                  FIND MATCH <ChevronRight className="w-6 h-6" />
-                </button>
-              </div>
-            )}
           </div>
 
           {/* Word List Display */}

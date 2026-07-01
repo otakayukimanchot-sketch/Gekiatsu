@@ -242,10 +242,12 @@ async function startServer() {
     console.log(`Client connected: ${socket.id} from ${socket.handshake.headers.origin}`);
     
     socket.on("join_match", ({ packId, questionCount, player }) => {
+      socket.data.player = player;
+
       // Clean up any other active matching pool entries for this player/socket
       matchingPool.forEach((val, key) => {
         const s = io.sockets.sockets.get(val);
-        if (val === socket.id || (s && s.data.player?.id === player.id)) {
+        if (val === socket.id || (s && s.data?.player?.id === player.id)) {
           matchingPool.delete(key);
         }
       });
@@ -256,8 +258,12 @@ async function startServer() {
       if (waitingSocketId && waitingSocketId !== socket.id) {
         const waitingSocket = io.sockets.sockets.get(waitingSocketId);
         
+        const isWaitingConnected = waitingSocket && (waitingSocket.connected !== false);
+        const waitingPlayerId = waitingSocket?.data?.player?.id;
+        const isSelf = waitingPlayerId ? (waitingPlayerId === player.id) : (waitingSocketId === socket.id);
+
         // Ensure the waiting socket exists, is connected, and is NOT the same player
-        if (waitingSocket && waitingSocket.connected && waitingSocket.data.player?.id !== player.id) {
+        if (waitingSocket && isWaitingConnected && !isSelf) {
           matchingPool.delete(poolKey);
           const roomId = `room_${Math.random().toString(36).substr(2, 9)}`;
           const questions = generateQuestions(packId, questionCount);
@@ -284,7 +290,6 @@ async function startServer() {
           startMatchedPhase(roomId);
         } else {
           // Stale socket in pool or self-socket, replace with current
-          socket.data.player = player;
           matchingPool.set(poolKey, socket.id);
           socket.emit("state_update", { 
             roomId: `waiting_${socket.id}`,
@@ -298,7 +303,6 @@ async function startServer() {
           });
         }
       } else {
-        socket.data.player = player;
         matchingPool.set(poolKey, socket.id);
         socket.emit("state_update", { 
           roomId: `waiting_${socket.id}`,
