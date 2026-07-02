@@ -12,6 +12,7 @@ import { TOEIC_GOLD_WORDS } from './data/toeicGold.ts';
 import { TOEIC_OVERLORD_WORDS } from './data/toeicOverlord.ts';
 import { TOEIC_LISTENING_WORDS } from './data/listening.ts';
 import { TOEIC_LISTENING_KAI_WORDS } from './data/listening_kai.ts';
+import { SOCIAL_TRIVIA_WORDS } from './data/socialTrivia.ts';
 
 export const PACKS: Pack[] = [
   // --- TOEIC ---
@@ -100,6 +101,14 @@ export const PACKS: Pack[] = [
     category: '理科',
     color: 'bg-gradient-to-br from-cyan-400 to-blue-500',
     words: ELEMENTS_WORDS,
+  },
+  {
+    id: 'social-trivia',
+    name: '社会予想問題',
+    description: '地理・歴史・公民の重要トピックを網羅した、定期テストや受験対策に最適な社会科予想クイズ。',
+    category: '社会',
+    color: 'bg-gradient-to-br from-orange-600 to-amber-800',
+    words: SOCIAL_TRIVIA_WORDS,
   },
   {
     id: 'trivia-300',
